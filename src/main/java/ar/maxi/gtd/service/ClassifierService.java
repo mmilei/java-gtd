@@ -71,8 +71,11 @@ public class ClassifierService {
     private boolean allNonFiling(List<Map<String, Object>> ops) {
         if (ops.isEmpty()) return true;
         return ops.stream().allMatch(op -> {
+            String opType = (String) op.get("op");
+            // done/update son siempre útiles — no triggean el fallback
+            if ("done".equals(opType) || "update".equals(opType)) return false;
             String bucket = (String) op.get("bucket");
-            return NON_FILING_BUCKETS.contains(bucket);
+            return bucket == null || NON_FILING_BUCKETS.contains(bucket);
         });
     }
 
