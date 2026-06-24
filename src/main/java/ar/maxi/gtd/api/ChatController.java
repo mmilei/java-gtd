@@ -1,6 +1,7 @@
 package ar.maxi.gtd.api;
 
 import ar.maxi.gtd.service.ClassifierService;
+import ar.maxi.gtd.service.ClassifierService.ClassifyResult;
 import ar.maxi.gtd.service.VaultService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -31,12 +32,26 @@ public class ChatController {
         }
 
         List<Map<String, Object>> openTasks = vault.listAllFlat();
-        List<Map<String, Object>> ops = classifier.classifyAll(message, openTasks);
+        ClassifyResult result = classifier.classifyAll(message, openTasks);
+        List<Map<String, Object>> ops = result.ops();
 
         List<Map<String, Object>> results = new ArrayList<>();
+        List<Map<String, Object>> discardedOps = new ArrayList<>();
+
         for (Map<String, Object> op : ops) {
-            results.add(dispatch(op));
+            Map<String, Object> dispatched = dispatch(op);
+            results.add(dispatched);
+
+            String bucket = (String) op.get("bucket");
+            if ("discard".equals(bucket)) {
+                discardedOps.add(op);
+            }
         }
+
+        if (!discardedOps.isEmpty()) {
+            vault.logDiscard(message, discardedOps);
+        }
+
         return ResponseEntity.ok(results);
     }
 

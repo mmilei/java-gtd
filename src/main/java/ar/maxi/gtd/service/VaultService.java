@@ -132,6 +132,26 @@ public class VaultService {
         }
     }
 
+    /** Registra un ítem descartado en .vault-meta/discard-log.jsonl */
+    public void logDiscard(String message, List<Map<String, Object>> ops) {
+        Path logFile = actionsDir.getParent().getParent().getParent()
+            .resolve(".vault-meta/discard-log.jsonl");
+        try {
+            Files.createDirectories(logFile.getParent());
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("ts", java.time.Instant.now().toString());
+            entry.put("message", message);
+            entry.put("ops", ops);
+            String line = new com.fasterxml.jackson.databind.ObjectMapper()
+                .writeValueAsString(entry) + "\n";
+            Files.writeString(logFile, line,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND);
+        } catch (Exception e) {
+            // log silencioso — no interrumpir el flujo principal
+        }
+    }
+
     private Path resolveFile(String filename) {
         Path inActions = actionsDir.resolve(filename);
         if (Files.exists(inActions)) return inActions;
