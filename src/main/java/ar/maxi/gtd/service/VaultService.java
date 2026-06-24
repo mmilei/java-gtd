@@ -28,6 +28,12 @@ public class VaultService {
     public VaultService(@Value("${gtd.vault.path}") String vaultPath) {
         this.actionsDir = Path.of(vaultPath, "wiki/gtd/actions");
         this.referenceDir = Path.of(vaultPath, "wiki/references");
+        try {
+            Files.createDirectories(actionsDir);
+            Files.createDirectories(referenceDir);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     public String write(Map<String, Object> item) {
