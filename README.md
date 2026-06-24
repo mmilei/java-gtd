@@ -10,12 +10,28 @@ Built with **Spring Boot 3** + **Spring AI** + **Groq** (Llama 3.3-70b).
 
 Send a message in plain language. The LLM runs the GTD decision tree (is it actionable? can it be done in 2 min? does it need delegation?) and returns a structured classification. If the item is worth filing, it gets written to the vault as a Markdown note with YAML frontmatter.
 
+One message can contain multiple tasks — create, done, and update operations are all supported in a single call.
+
 ```
 POST /api/chat
 {"message": "llamar al médico la semana que viene"}
 
-→ { "filed": true, "bucket": "backlog", "file": "20260624-181203-llamar-al-medico.md" }
+→ [{ "op": "create", "filed": true, "bucket": "backlog", "file": "20260624-181203-llamar-al-medico.md" }]
 ```
+
+Multi-task example:
+
+```
+POST /api/chat
+{"message": "ya hice la cama, y al médico agregale que también hay que pedir turno para el dentista"}
+
+→ [
+    { "op": "done",   "filed": true, "file": "20260624-173158-hacer-la-cama.md" },
+    { "op": "update", "filed": true, "file": "20260624-203748-llamar-al-medico.md", "appended": "también hay que pedir turno para el dentista" }
+  ]
+```
+
+Items classified as `discard` are not filed but are logged to `.vault-meta/discard-log.jsonl` for later review. A two-level prompt strategy is used: lightweight prompt first, falling back to a more detailed one if the response fails to parse or everything comes back as `discard`/`now`.
 
 ---
 
@@ -23,7 +39,7 @@ POST /api/chat
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/chat` | Classify and file a natural language item |
+| `POST` | `/api/chat` | Classify and execute one or more GTD operations from a natural language message (create / done / update) |
 | `GET` | `/api/today` | List open items in the *today* bucket |
 | `GET` | `/api/buckets` | List all open items grouped by bucket |
 | `GET` | `/api/buckets/{bucket}` | List open items in a specific bucket |
