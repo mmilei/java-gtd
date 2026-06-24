@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -30,9 +31,17 @@ public class ClassifierService {
         }
     }
 
-    public Map<String, Object> classify(String message) {
+    public List<Map<String, Object>> classifyAll(String message, List<Map<String, Object>> openTasks) {
+        String openTasksJson;
+        try {
+            openTasksJson = openTasks.isEmpty() ? "[]" : objectMapper.writeValueAsString(openTasks);
+        } catch (Exception e) {
+            openTasksJson = "[]";
+        }
+
         String promptText = promptTemplate
             .replace("{today}", LocalDate.now().toString())
+            .replace("{open_tasks}", openTasksJson)
             .replace("{message}", message);
 
         String response = chatClient.prompt()
@@ -40,11 +49,10 @@ public class ClassifierService {
             .call()
             .content();
 
-        return parseJson(response);
+        return parseJsonList(response);
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> parseJson(String raw) {
+    private List<Map<String, Object>> parseJsonList(String raw) {
         try {
             String json = raw.strip();
             if (json.startsWith("```")) {
@@ -52,7 +60,7 @@ public class ClassifierService {
                 int end = json.lastIndexOf("```");
                 json = json.substring(start, end).strip();
             }
-            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+            return objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
         } catch (Exception e) {
             throw new RuntimeException("El LLM devolvió JSON inválido: " + raw, e);
         }

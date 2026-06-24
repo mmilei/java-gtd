@@ -27,7 +27,7 @@ public class VaultService {
 
     public VaultService(@Value("${gtd.vault.path}") String vaultPath) {
         this.actionsDir = Path.of(vaultPath, "wiki/gtd/actions");
-        this.referenceDir = Path.of(vaultPath, "wiki/references");
+        this.referenceDir = Path.of(vaultPath, "wiki/gtd/reference");
     }
 
     public String write(Map<String, Object> item) {
@@ -88,9 +88,23 @@ public class VaultService {
         return result;
     }
 
+    /** Lista plana de todas las tareas abiertas (file, title, bucket) para contexto del LLM. */
+    public List<Map<String, Object>> listAllFlat() {
+        List<Map<String, Object>> all = new ArrayList<>();
+        for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
+            for (Map<String, Object> item : list(bucket)) {
+                Map<String, Object> slim = new LinkedHashMap<>();
+                slim.put("file", item.get("file"));
+                slim.put("title", item.get("title"));
+                slim.put("bucket", item.get("bucket"));
+                all.add(slim);
+            }
+        }
+        return all;
+    }
+
     public void markDone(String filename) {
-        Path file = actionsDir.resolve(filename);
-        if (!Files.exists(file)) file = referenceDir.resolve(filename);
+        Path file = resolveFile(filename);
         try {
             String content = Files.readString(file);
             Map<String, Object> item = MarkdownSerializer.parse(content);
@@ -101,6 +115,29 @@ public class VaultService {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /** Agrega texto al cuerpo de una nota existente. */
+    public void appendToTask(String filename, String append) {
+        Path file = resolveFile(filename);
+        try {
+            String content = Files.readString(file);
+            Map<String, Object> item = MarkdownSerializer.parse(content);
+            String body = (String) item.remove("body");
+            String newBody = (body == null || body.isBlank()) ? append : body + "\n" + append;
+            item.put("updated", LocalDate.now().toString());
+            Files.writeString(file, MarkdownSerializer.serialize(item, newBody));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private Path resolveFile(String filename) {
+        Path inActions = actionsDir.resolve(filename);
+        if (Files.exists(inActions)) return inActions;
+        Path inRef = referenceDir.resolve(filename);
+        if (Files.exists(inRef)) return inRef;
+        throw new IllegalArgumentException("Archivo no encontrado: " + filename);
     }
 
     private Map<String, Object> readFile(Path file) {
