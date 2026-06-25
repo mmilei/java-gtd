@@ -25,7 +25,12 @@ OPERACIONES disponibles:
 - "update": agregar texto al cuerpo de una tarea existente. Campos: op, target_file, append
 - "move": mover una tarea a otro bucket. Campos: op, target_file, new_bucket, due (o null)
   Usarlo cuando el usuario reclasifica ("pasalo a backlog", "esto es para hoy", "sacalo de today")
-  Distinción clave: "update" agrega contenido al cuerpo, "move" cambia el bucket
+  Distinción: "update" agrega contenido al cuerpo, "move" cambia el bucket
+- "edit": reemplazar el cuerpo completo. Campos: op, target_file, new_body
+  Usarlo cuando el usuario quiere reemplazar el contenido ("cambiá el body de X por...", "reescribí X")
+  Distinción: "update" agrega, "edit" reemplaza todo el body
+- "dismiss": descartar una tarea. Campos: op, target_file
+  done = la completé; dismiss = decidí no hacerla
 
 EJEMPLOS:
 - "comprar pan" → [{"op":"create","bucket":"today","title":"Comprar pan","body":"","due":null,"delegado_a":null,"tags":[]}]

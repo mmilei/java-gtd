@@ -25,13 +25,16 @@ public class VaultService {
 
     private final Path actionsDir;
     private final Path referenceDir;
+    private final UndoStack undoStack;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message");
+    private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
 
-    public VaultService(@Value("${gtd.vault.path}") String vaultPath) {
+    public VaultService(@Value("${gtd.vault.path}") String vaultPath, UndoStack undoStack) {
         this.actionsDir = Path.of(vaultPath, "wiki/gtd/actions");
         this.referenceDir = Path.of(vaultPath, "wiki/references");
+        this.undoStack = undoStack;
         try {
             Files.createDirectories(actionsDir);
             Files.createDirectories(referenceDir);
@@ -47,6 +50,7 @@ public class VaultService {
         String timestamp = TIMESTAMP.format(LocalDateTime.now());
         String slug = toSlug((String) item.getOrDefault("title", "item"));
         String filename = timestamp + "-" + slug + ".md";
+        Path dest = dir.resolve(filename);
 
         Map<String, Object> frontmatter = new LinkedHashMap<>();
         frontmatter.put("type", "reference".equals(bucket) ? "reference" : "action");
@@ -58,7 +62,6 @@ public class VaultService {
         if (item.get("delegado_a") != null) frontmatter.put("delegado_a", item.get("delegado_a"));
         frontmatter.put("tags", item.getOrDefault("tags", List.of("gtd")));
 
-        // absorb any extra fields the LLM added — schema extensible sin tocar código
         item.entrySet().stream()
             .filter(e -> !CLASSIFIER_KEYS.contains(e.getKey()) && !frontmatter.containsKey(e.getKey()))
             .forEach(e -> frontmatter.put(e.getKey(), e.getValue()));
@@ -67,7 +70,9 @@ public class VaultService {
         String content = MarkdownSerializer.serialize(frontmatter, body);
 
         try {
-            Files.writeString(dir.resolve(filename), content);
+            Files.writeString(dest, content);
+            // undo: previousContent null = delete on undo
+            undoStack.push(new UndoStack.UndoEntry(filename, dest, null));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -82,7 +87,7 @@ public class VaultService {
                 .map(this::readFile)
                 .filter(Objects::nonNull)
                 .filter(m -> bucket == null || bucket.equals(m.get("bucket")))
-                .filter(m -> !"done".equals(m.get("status")))
+                .filter(m -> !INACTIVE_STATUSES.contains(m.get("status")))
                 .sorted(Comparator.comparing(m -> String.valueOf(m.getOrDefault("file", ""))))
                 .collect(Collectors.toList());
         } catch (IOException e) {
@@ -98,7 +103,6 @@ public class VaultService {
         return result;
     }
 
-    /** Lista plana de todas las tareas abiertas (file, title, bucket) para contexto del LLM. */
     public List<Map<String, Object>> listAllFlat() {
         List<Map<String, Object>> all = new ArrayList<>();
         for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
@@ -114,46 +118,39 @@ public class VaultService {
     }
 
     public void markDone(String filename) {
-        Path file = resolveFile(filename);
-        try {
-            String content = Files.readString(file);
-            Map<String, Object> item = MarkdownSerializer.parse(content);
-            String body = (String) item.remove("body");
-            item.put("status", "done");
-            item.put("updated", LocalDate.now().toString());
-            Files.writeString(file, MarkdownSerializer.serialize(item, body));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        mutate(filename, item -> item.put("status", "done"));
     }
 
-    /** Agrega texto al cuerpo de una nota existente. */
+    public void dismissItem(String filename) {
+        mutate(filename, item -> item.put("status", "dismissed"));
+    }
+
     public void appendToTask(String filename, String append) {
-        Path file = resolveFile(filename);
-        try {
-            String content = Files.readString(file);
-            Map<String, Object> item = MarkdownSerializer.parse(content);
+        mutate(filename, item -> {
             String body = (String) item.remove("body");
             String newBody = (body == null || body.isBlank()) ? append : body + "\n" + append;
-            item.put("updated", LocalDate.now().toString());
-            Files.writeString(file, MarkdownSerializer.serialize(item, newBody));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+            item.put("_body_override", newBody);
+        });
     }
 
-    /** Cambia el bucket de una tarea existente. Mueve el archivo físicamente si el destino es reference. */
+    public void replaceBody(String filename, String newBody) {
+        mutate(filename, item -> item.put("_body_override", newBody));
+    }
+
     public void moveBucket(String filename, String newBucket, String due) {
         Path file = resolveFile(filename);
         try {
-            String content = Files.readString(file);
-            Map<String, Object> item = MarkdownSerializer.parse(content);
+            String previousContent = Files.readString(file);
+            undoStack.push(new UndoStack.UndoEntry(filename, file, previousContent));
+
+            Map<String, Object> item = MarkdownSerializer.parse(previousContent);
             String body = (String) item.remove("body");
             item.put("bucket", newBucket);
             if (due != null && !due.isBlank()) item.put("due", due);
             if ("reference".equals(newBucket)) item.put("type", "reference");
             item.put("updated", LocalDate.now().toString());
             String newContent = MarkdownSerializer.serialize(item, body);
+
             if ("reference".equals(newBucket) && file.getParent().equals(actionsDir)) {
                 Path dest = referenceDir.resolve(file.getFileName());
                 Files.writeString(dest, newContent);
@@ -166,7 +163,6 @@ public class VaultService {
         }
     }
 
-    /** Registra un ítem descartado en .vault-meta/discard-log.jsonl */
     public void logDiscard(String message, List<Map<String, Object>> ops) {
         Path logFile = actionsDir.getParent().getParent().getParent()
             .resolve(".vault-meta/discard-log.jsonl");
@@ -182,7 +178,30 @@ public class VaultService {
                 java.nio.file.StandardOpenOption.CREATE,
                 java.nio.file.StandardOpenOption.APPEND);
         } catch (Exception e) {
-            // log silencioso — no interrumpir el flujo principal
+            // silencioso — no interrumpir el flujo principal
+        }
+    }
+
+    // ─── helpers ────────────────────────────────────────────────────────────
+
+    private void mutate(String filename, java.util.function.Consumer<Map<String, Object>> modifier) {
+        Path file = resolveFile(filename);
+        try {
+            String previousContent = Files.readString(file);
+            undoStack.push(new UndoStack.UndoEntry(filename, file, previousContent));
+
+            Map<String, Object> item = MarkdownSerializer.parse(previousContent);
+            String body = (String) item.remove("body");
+            modifier.accept(item);
+
+            // _body_override permite que appendToTask/replaceBody cambien el body
+            String newBody = (String) item.remove("_body_override");
+            if (newBody == null) newBody = body;
+
+            item.put("updated", LocalDate.now().toString());
+            Files.writeString(file, MarkdownSerializer.serialize(item, newBody));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 
