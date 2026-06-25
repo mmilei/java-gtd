@@ -214,7 +214,7 @@ public class VaultService {
                 java.nio.file.StandardOpenOption.CREATE,
                 java.nio.file.StandardOpenOption.APPEND);
         } catch (Exception e) {
-            log.warn("logDiscard failed, entry not persisted: {}", e.getMessage());
+            log.warn("logDiscard failed, entry not persisted", e);
         }
     }
 
