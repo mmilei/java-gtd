@@ -17,28 +17,77 @@ en buckets GTD y escribe notas Markdown a un vault Obsidian.
   No agregar nada en `src/main/resources/static/`.
 - Antes de commitear, correr `mvn test`. Los 27 tests tienen que pasar.
 
-## Estructura del proyecto
+---
+
+## Estructura de archivos
+
+### Mínimo para compilar y levantar
 
 ```
+pom.xml                                          ← dependencias Maven
+
 src/main/java/ar/maxi/gtd/
-  api/          — controllers REST + GlobalExceptionHandler
-  service/      — VaultService, ClassifierService, UndoStack
-  util/         — MarkdownSerializer
+  GtdApplication.java                            ← @SpringBootApplication, main()
+
+  api/
+    BucketController.java                        ← GET /api/buckets, /today, /items/*, /stats, /history
+    ChatController.java                          ← POST /api/chat (clasifica + despacha ops)
+    UndoController.java                          ← POST /api/undo
+    GlobalExceptionHandler.java                  ← @RestControllerAdvice centralizado
+
+  service/
+    ClassifierService.java                       ← llama al LLM, dos niveles de prompt
+    VaultService.java                            ← lee/escribe archivos .md en el vault
+    UndoStack.java                               ← Deque<UndoEntry> cap 10, thread-safe
+
+  util/
+    MarkdownSerializer.java                      ← parse/serialize YAML frontmatter
 
 src/main/resources/
-  prompts/      — classifier.st, classifier-fallback.st (templates del LLM)
-  application.properties
-
-src/test/       — 27 tests: BucketControllerTest, ChatControllerTest,
-                  UndoControllerTest, VaultServiceTest
+  application.properties                         ← config base (GROQ_API_KEY, GTD_VAULT_PATH)
+  application-local.properties                   ← gitignored, overrides locales
+  prompts/
+    classifier.st                                ← prompt liviano (nivel 1)
+    classifier-fallback.st                       ← prompt detallado con ejemplos (nivel 2)
 ```
+
+Sin cualquiera de estos archivos, la app no compila o no levanta.
+
+### Vault Obsidian (generado en runtime, no en el repo)
+
+```
+<GTD_VAULT_PATH>/
+  wiki/
+    gtd/
+      actions/          ← tareas: today, backlog, waiting, someday
+    references/         ← bucket reference + saves de Claude
+  .vault-meta/
+    discard-log.jsonl   ← log append-only de ops descartadas
+```
+
+`VaultService` crea `wiki/gtd/actions/` y `wiki/references/` en startup si no existen.
+
+### Tests
+
+```
+src/test/java/ar/maxi/gtd/
+  api/
+    BucketControllerTest.java    ← 14 tests, @WebMvcTest + @MockBean VaultService
+    ChatControllerTest.java      ← 6 tests,  @WebMvcTest + @MockBean Classifier + Vault
+    UndoControllerTest.java      ← 3 tests,  @WebMvcTest + @MockBean UndoStack
+  service/
+    VaultServiceTest.java        ← 4 tests,  instancia real con @TempDir
+```
+
+---
 
 ## Stack
 
 - Spring Boot 3.3.5 / Spring AI 1.0.0-M6
-- Groq via endpoint OpenAI-compatible
+- Groq via endpoint OpenAI-compatible (`https://api.groq.com/openai`)
 - SnakeYAML para frontmatter de los .md
 - Virtual threads habilitados (`spring.threads.virtual.enabled=true`)
+- Java 21+ (se corre con JDK 26 — Surefire tiene `-Dnet.bytebuddy.experimental=true`)
 
 ## Config local
 
