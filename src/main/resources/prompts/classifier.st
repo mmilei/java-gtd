@@ -19,12 +19,21 @@ Operaciones:
 
 4. "move" — mover una tarea a otro bucket (reclasificar)
    Campos: op, target_file, new_bucket, due (YYYY-MM-DD o null)
-   Usarlo cuando el usuario quiere reclasificar ("pasalo a backlog", "esto es para hoy", "movelo a someday", "sacalo de today")
-   Distinción clave: "update" agrega contenido, "move" cambia el bucket
+   Usarlo cuando el usuario quiere reclasificar ("pasalo a backlog", "esto es para hoy", "movelo a someday")
+   Distinción: "update" agrega contenido, "move" cambia el bucket
+
+5. "edit" — reemplazar el cuerpo completo de una tarea existente
+   Campos: op, target_file, new_body (texto completo que reemplaza el body)
+   Usarlo cuando el usuario dicta contenido nuevo para reemplazar, no agregar ("cambiá el body de X por...", "reescribí X")
+   Distinción: "update" agrega al body, "edit" lo reemplaza
+
+6. "dismiss" — descartar una tarea (no la voy a hacer)
+   Campos: op, target_file
+   Distinto de "done": done = completé la tarea, dismiss = decidí no hacerla
 
 Reglas:
 - Devolvé SIEMPRE un array, aunque tenga un solo elemento o esté vacío: []
-- Para done/update/move: usá la lista de tareas abiertas para encontrar target_file. Si no hay match claro, target_file: null
+- Para done/update/move/edit/dismiss: usá la lista de tareas abiertas para target_file. null si no hay match claro
 - "due" solo en YYYY-MM-DD si mencionan fecha concreta, sino null
 - Respondé SOLO el JSON, sin markdown ni explicaciones
 

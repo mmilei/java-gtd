@@ -12,7 +12,7 @@ class VaultServiceTest {
 
     @Test
     void shouldCreateVaultDirectoriesOnStartup(@TempDir Path tempDir) {
-        new VaultService(tempDir.toString());
+        new VaultService(tempDir.toString(), new UndoStack());
 
         assertThat(tempDir.resolve("wiki/gtd/actions")).isDirectory();
         assertThat(tempDir.resolve("wiki/references")).isDirectory();
@@ -24,7 +24,7 @@ class VaultServiceTest {
         Files.createDirectories(tempDir.resolve("wiki/references"));
 
         org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-            () -> new VaultService(tempDir.toString())
+            () -> new VaultService(tempDir.toString(), new UndoStack())
         );
     }
 }

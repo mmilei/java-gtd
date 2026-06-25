@@ -73,7 +73,8 @@ public class ClassifierService {
         return ops.stream().allMatch(op -> {
             String opType = (String) op.get("op");
             // done/update son siempre útiles — no triggean el fallback
-            if ("done".equals(opType) || "update".equals(opType) || "move".equals(opType)) return false;
+            if ("done".equals(opType) || "update".equals(opType) || "move".equals(opType)
+                    || "edit".equals(opType) || "dismiss".equals(opType)) return false;
             String bucket = (String) op.get("bucket");
             return bucket == null || NON_FILING_BUCKETS.contains(bucket);
         });

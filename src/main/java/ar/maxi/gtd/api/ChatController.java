@@ -62,7 +62,9 @@ public class ChatController {
                 case "create" -> handleCreate(op);
                 case "done"   -> handleDone(op);
                 case "update" -> handleUpdate(op);
-                case "move"   -> handleMove(op);
+                case "move"    -> handleMove(op);
+                case "edit"    -> handleEdit(op);
+                case "dismiss" -> handleDismissOp(op);
                 default       -> Map.of("op", opType, "filed", false, "error", "op desconocido: " + opType);
             };
         } catch (Exception e) {
@@ -96,6 +98,25 @@ public class ChatController {
         }
         vault.markDone(targetFile);
         return Map.of("op", "done", "filed", true, "file", targetFile);
+    }
+
+    private Map<String, Object> handleEdit(Map<String, Object> op) {
+        String targetFile = (String) op.get("target_file");
+        if (targetFile == null) {
+            return Map.of("op", "edit", "filed", false, "error", "no match encontrado");
+        }
+        String newBody = (String) op.getOrDefault("new_body", "");
+        vault.replaceBody(targetFile, newBody);
+        return Map.of("op", "edit", "filed", true, "file", targetFile);
+    }
+
+    private Map<String, Object> handleDismissOp(Map<String, Object> op) {
+        String targetFile = (String) op.get("target_file");
+        if (targetFile == null) {
+            return Map.of("op", "dismiss", "filed", false, "error", "no match encontrado");
+        }
+        vault.dismissItem(targetFile);
+        return Map.of("op", "dismiss", "filed", true, "file", targetFile);
     }
 
     private Map<String, Object> handleMove(Map<String, Object> op) {

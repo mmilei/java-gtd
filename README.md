@@ -10,7 +10,7 @@ Built with **Spring Boot 3** + **Spring AI** + **Groq** (Llama 3.3-70b).
 
 Send a message in plain language. The LLM runs the GTD decision tree (is it actionable? can it be done in 2 min? does it need delegation?) and returns a structured classification. If the item is worth filing, it gets written to the vault as a Markdown note with YAML frontmatter.
 
-One message can contain multiple tasks — create, done, and update operations are all supported in a single call.
+One message can contain multiple tasks — create, done, update, move, edit, and dismiss operations are all supported in a single call.
 
 ```
 POST /api/chat
@@ -39,11 +39,14 @@ Items classified as `discard` are not filed but are logged to `.vault-meta/disca
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/chat` | Classify and execute one or more GTD operations from a natural language message (create / done / update) |
+| `POST` | `/api/chat` | Classify and execute one or more GTD operations from a natural language message (create / done / update / move / edit / dismiss) |
 | `GET` | `/api/today` | List open items in the *today* bucket |
 | `GET` | `/api/buckets` | List all open items grouped by bucket |
 | `GET` | `/api/buckets/{bucket}` | List open items in a specific bucket |
-| `POST` | `/api/items/{filename}/done` | Mark an item as done |
+| `POST` | `/api/items/{filename}/done` | Mark an item as completed |
+| `POST` | `/api/items/{filename}/dismiss` | Discard an item (decided not to do it) |
+| `PUT` | `/api/items/{filename}/body` | Replace the body of an existing item — `{ "body": "..." }` |
+| `POST` | `/api/undo` | Undo the last mutating operation (in-memory stack, resets on restart) |
 
 ### Buckets
 
