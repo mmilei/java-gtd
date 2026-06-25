@@ -97,7 +97,7 @@ public class VaultService {
 
     public Map<String, List<Map<String, Object>>> listAll() {
         Map<String, List<Map<String, Object>>> result = new LinkedHashMap<>();
-        for (String bucket : List.of("today", "backlog", "waiting", "someday")) {
+        for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
             result.put(bucket, list(bucket));
         }
         return result;
@@ -135,6 +135,42 @@ public class VaultService {
 
     public void replaceBody(String filename, String newBody) {
         mutate(filename, item -> item.put("_body_override", newBody));
+    }
+
+    public Map<String, Object> read(String filename) {
+        Path file = resolveFile(filename);
+        Map<String, Object> item = readFile(file);
+        if (item == null) throw new IllegalArgumentException("Archivo no encontrado: " + filename);
+        return item;
+    }
+
+    public Map<String, Object> stats() {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        int total = 0;
+        for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
+            int count = list(bucket).size();
+            counts.put(bucket, count);
+            total += count;
+        }
+        return Map.of("counts", counts, "total", total);
+    }
+
+    public List<Map<String, Object>> history(int limit) {
+        List<Map<String, Object>> all = new ArrayList<>();
+        for (Path dir : List.of(actionsDir, referenceDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md"))
+                     .map(this::readFile)
+                     .filter(Objects::nonNull)
+                     .filter(m -> INACTIVE_STATUSES.contains(m.get("status")))
+                     .forEach(all::add);
+            } catch (IOException e) { /* directorio vacío, ignorar */ }
+        }
+        all.sort(Comparator.comparing(
+            m -> String.valueOf(m.getOrDefault("updated", m.getOrDefault("created", ""))),
+            Comparator.reverseOrder()
+        ));
+        return limit > 0 ? all.subList(0, Math.min(limit, all.size())) : all;
     }
 
     public void moveBucket(String filename, String newBucket, String due) {

@@ -23,11 +23,11 @@ public class ChatController {
     }
 
     @PostMapping("/chat")
-    public ResponseEntity<List<Map<String, Object>>> chat(@RequestBody Map<String, String> body) {
+    public ResponseEntity<ChatResponse> chat(@RequestBody Map<String, String> body) {
         String message = body.get("message");
         if (message == null || message.isBlank()) {
             return ResponseEntity.badRequest().body(
-                List.of(Map.of("error", "message is required"))
+                new ChatResponse(false, List.of(Map.of("error", "message is required")))
             );
         }
 
@@ -52,7 +52,7 @@ public class ChatController {
             vault.logDiscard(message, discardedOps);
         }
 
-        return ResponseEntity.ok(results);
+        return ResponseEntity.ok(new ChatResponse(result.usedFallback(), results));
     }
 
     private Map<String, Object> dispatch(Map<String, Object> op) {
@@ -74,11 +74,13 @@ public class ChatController {
 
     private Map<String, Object> handleCreate(Map<String, Object> op) {
         String bucket = (String) op.get("bucket");
+        String title  = op.get("title") != null ? (String) op.get("title") : "";
         if ("now".equals(bucket) || "discard".equals(bucket)) {
             return Map.of(
                 "op", "create",
                 "filed", false,
                 "bucket", bucket,
+                "title", title,
                 "message", op.getOrDefault("message", "No archivado.")
             );
         }
@@ -87,7 +89,8 @@ public class ChatController {
             "op", "create",
             "filed", true,
             "bucket", bucket,
-            "file", filename
+            "file", filename,
+            "title", title
         );
     }
 
@@ -139,4 +142,6 @@ public class ChatController {
         vault.appendToTask(targetFile, append);
         return Map.of("op", "update", "filed", true, "file", targetFile, "appended", append);
     }
+
+    record ChatResponse(boolean fallback, List<Map<String, Object>> ops) {}
 }
