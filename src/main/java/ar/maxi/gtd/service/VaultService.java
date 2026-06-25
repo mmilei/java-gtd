@@ -97,7 +97,7 @@ public class VaultService {
 
     public Map<String, List<Map<String, Object>>> listAll() {
         Map<String, List<Map<String, Object>>> result = new LinkedHashMap<>();
-        for (String bucket : List.of("today", "backlog", "waiting", "someday")) {
+        for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
             result.put(bucket, list(bucket));
         }
         return result;
@@ -135,6 +135,24 @@ public class VaultService {
 
     public void replaceBody(String filename, String newBody) {
         mutate(filename, item -> item.put("_body_override", newBody));
+    }
+
+    public Map<String, Object> read(String filename) {
+        Path file = resolveFile(filename);
+        Map<String, Object> item = readFile(file);
+        if (item == null) throw new IllegalArgumentException("Archivo no encontrado: " + filename);
+        return item;
+    }
+
+    public Map<String, Object> stats() {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        int total = 0;
+        for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
+            int count = list(bucket).size();
+            counts.put(bucket, count);
+            total += count;
+        }
+        return Map.of("counts", counts, "total", total);
     }
 
     public void moveBucket(String filename, String newBucket, String due) {
