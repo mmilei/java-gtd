@@ -1,6 +1,8 @@
 package ar.maxi.gtd.service;
 
 import ar.maxi.gtd.util.MarkdownSerializer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +21,8 @@ import java.util.stream.Stream;
 @Service
 public class VaultService {
 
+    private static final Logger log = LoggerFactory.getLogger(VaultService.class);
+
     private final Path actionsDir;
     private final Path referenceDir;
 
@@ -28,6 +32,12 @@ public class VaultService {
     public VaultService(@Value("${gtd.vault.path}") String vaultPath) {
         this.actionsDir = Path.of(vaultPath, "wiki/gtd/actions");
         this.referenceDir = Path.of(vaultPath, "wiki/references");
+        try {
+            Files.createDirectories(actionsDir);
+            Files.createDirectories(referenceDir);
+        } catch (IOException e) {
+            log.error("Could not create vault directories: {}", e.getMessage());
+        }
     }
 
     public String write(Map<String, Object> item) {
