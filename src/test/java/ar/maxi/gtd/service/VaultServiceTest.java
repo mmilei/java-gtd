@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class VaultServiceTest {
 
@@ -16,6 +17,22 @@ class VaultServiceTest {
 
         assertThat(tempDir.resolve("wiki/gtd/actions")).isDirectory();
         assertThat(tempDir.resolve("wiki/references")).isDirectory();
+    }
+
+    @Test
+    void shouldRejectPathTraversalInFilename(@TempDir Path tempDir) {
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        assertThatThrownBy(() -> vault.read("../../../etc/passwd"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Filename inválido");
+    }
+
+    @Test
+    void shouldRejectFilenameWithoutMdExtension(@TempDir Path tempDir) {
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        assertThatThrownBy(() -> vault.read("noextension"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Filename inválido");
     }
 
     @Test

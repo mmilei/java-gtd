@@ -2,6 +2,8 @@ package ar.maxi.gtd.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,8 @@ import java.util.Set;
 
 @Service
 public class ClassifierService {
+
+    private static final Logger log = LoggerFactory.getLogger(ClassifierService.class);
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
@@ -61,7 +65,12 @@ public class ClassifierService {
             // Nivel 2
             String level2 = buildPrompt(fallbackTemplate, today, openTasksJson, message);
             String response2 = call(level2);
-            ops = parseJsonList(response2);
+            try {
+                ops = parseJsonList(response2);
+            } catch (Exception e) {
+                log.error("Fallback también falló al parsear JSON: {}", e.getMessage());
+                ops = List.of();
+            }
             usedFallback = true;
         }
 
