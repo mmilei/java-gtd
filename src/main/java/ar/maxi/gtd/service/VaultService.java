@@ -142,6 +142,30 @@ public class VaultService {
         }
     }
 
+    /** Cambia el bucket de una tarea existente. Mueve el archivo físicamente si el destino es reference. */
+    public void moveBucket(String filename, String newBucket, String due) {
+        Path file = resolveFile(filename);
+        try {
+            String content = Files.readString(file);
+            Map<String, Object> item = MarkdownSerializer.parse(content);
+            String body = (String) item.remove("body");
+            item.put("bucket", newBucket);
+            if (due != null && !due.isBlank()) item.put("due", due);
+            if ("reference".equals(newBucket)) item.put("type", "reference");
+            item.put("updated", LocalDate.now().toString());
+            String newContent = MarkdownSerializer.serialize(item, body);
+            if ("reference".equals(newBucket) && file.getParent().equals(actionsDir)) {
+                Path dest = referenceDir.resolve(file.getFileName());
+                Files.writeString(dest, newContent);
+                Files.delete(file);
+            } else {
+                Files.writeString(file, newContent);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     /** Registra un ítem descartado en .vault-meta/discard-log.jsonl */
     public void logDiscard(String message, List<Map<String, Object>> ops) {
         Path logFile = actionsDir.getParent().getParent().getParent()

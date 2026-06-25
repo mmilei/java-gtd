@@ -62,6 +62,7 @@ public class ChatController {
                 case "create" -> handleCreate(op);
                 case "done"   -> handleDone(op);
                 case "update" -> handleUpdate(op);
+                case "move"   -> handleMove(op);
                 default       -> Map.of("op", opType, "filed", false, "error", "op desconocido: " + opType);
             };
         } catch (Exception e) {
@@ -95,6 +96,17 @@ public class ChatController {
         }
         vault.markDone(targetFile);
         return Map.of("op", "done", "filed", true, "file", targetFile);
+    }
+
+    private Map<String, Object> handleMove(Map<String, Object> op) {
+        String targetFile = (String) op.get("target_file");
+        if (targetFile == null) {
+            return Map.of("op", "move", "filed", false, "error", "no match encontrado");
+        }
+        String newBucket = (String) op.get("new_bucket");
+        String due = (String) op.get("due");
+        vault.moveBucket(targetFile, newBucket, due);
+        return Map.of("op", "move", "filed", true, "file", targetFile, "new_bucket", newBucket);
     }
 
     private Map<String, Object> handleUpdate(Map<String, Object> op) {
