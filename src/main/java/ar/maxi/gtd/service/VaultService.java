@@ -87,7 +87,7 @@ public class VaultService {
                 .map(this::readFile)
                 .filter(Objects::nonNull)
                 .filter(m -> bucket == null || bucket.equals(m.get("bucket")))
-                .filter(m -> !INACTIVE_STATUSES.contains(m.get("status")))
+                .filter(m -> !INACTIVE_STATUSES.contains(String.valueOf(m.getOrDefault("status", ""))))
                 .sorted(Comparator.comparing(m -> String.valueOf(m.getOrDefault("file", ""))))
                 .collect(Collectors.toList());
         } catch (IOException e) {
@@ -162,7 +162,7 @@ public class VaultService {
                 files.filter(p -> p.toString().endsWith(".md"))
                      .map(this::readFile)
                      .filter(Objects::nonNull)
-                     .filter(m -> INACTIVE_STATUSES.contains(m.get("status")))
+                     .filter(m -> INACTIVE_STATUSES.contains(String.valueOf(m.getOrDefault("status", ""))))
                      .forEach(all::add);
             } catch (IOException e) { /* directorio vacío, ignorar */ }
         }
