@@ -1,12 +1,17 @@
 package ar.maxi.gtd.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.error.YAMLException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class MarkdownSerializer {
+
+    private static final Logger log = LoggerFactory.getLogger(MarkdownSerializer.class);
 
     private MarkdownSerializer() {}
 
@@ -26,7 +31,13 @@ public final class MarkdownSerializer {
         String bodyPart = bodyStart == -1 ? "" : content.substring(bodyStart + 1).strip();
 
         Yaml yaml = new Yaml();
-        Map<String, Object> map = yaml.load(yamlPart);
+        Map<String, Object> map;
+        try {
+            map = yaml.load(yamlPart);
+        } catch (YAMLException e) {
+            log.warn("YAML malformado en archivo, usando frontmatter vacío: {}", e.getMessage());
+            map = null;
+        }
         if (map == null) map = new LinkedHashMap<>();
         map = new LinkedHashMap<>(map);
         map.put("body", bodyPart);

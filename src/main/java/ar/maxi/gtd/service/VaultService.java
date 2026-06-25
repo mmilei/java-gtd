@@ -173,7 +173,7 @@ public class VaultService {
         return limit > 0 ? all.subList(0, Math.min(limit, all.size())) : all;
     }
 
-    public void moveBucket(String filename, String newBucket, String due) {
+    public synchronized void moveBucket(String filename, String newBucket, String due) {
         Path file = resolveFile(filename);
         try {
             String previousContent = Files.readString(file);
@@ -214,13 +214,13 @@ public class VaultService {
                 java.nio.file.StandardOpenOption.CREATE,
                 java.nio.file.StandardOpenOption.APPEND);
         } catch (Exception e) {
-            // silencioso — no interrumpir el flujo principal
+            log.warn("logDiscard failed, entry not persisted: {}", e.getMessage());
         }
     }
 
     // ─── helpers ────────────────────────────────────────────────────────────
 
-    private void mutate(String filename, java.util.function.Consumer<Map<String, Object>> modifier) {
+    private synchronized void mutate(String filename, java.util.function.Consumer<Map<String, Object>> modifier) {
         Path file = resolveFile(filename);
         try {
             String previousContent = Files.readString(file);
@@ -242,6 +242,9 @@ public class VaultService {
     }
 
     private Path resolveFile(String filename) {
+        if (!filename.matches("[\\w.\\-]+\\.md")) {
+            throw new IllegalArgumentException("Filename inválido: " + filename);
+        }
         Path inActions = actionsDir.resolve(filename);
         if (Files.exists(inActions)) return inActions;
         Path inRef = referenceDir.resolve(filename);
