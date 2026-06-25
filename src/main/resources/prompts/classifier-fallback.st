@@ -22,7 +22,10 @@ Tareas abiertas actuales:
 OPERACIONES disponibles:
 - "create": nueva tarea. Campos: op, bucket, title, body, due (YYYY-MM-DD o null), delegado_a (null o nombre), tags []
 - "done": completar tarea existente. Campos: op, target_file (de la lista de tareas abiertas, o null)
-- "update": modificar tarea existente. Campos: op, target_file, append (texto a agregar)
+- "update": agregar texto al cuerpo de una tarea existente. Campos: op, target_file, append
+- "move": mover una tarea a otro bucket. Campos: op, target_file, new_bucket, due (o null)
+  Usarlo cuando el usuario reclasifica ("pasalo a backlog", "esto es para hoy", "sacalo de today")
+  Distinción clave: "update" agrega contenido al cuerpo, "move" cambia el bucket
 
 EJEMPLOS:
 - "comprar pan" → [{"op":"create","bucket":"today","title":"Comprar pan","body":"","due":null,"delegado_a":null,"tags":[]}]

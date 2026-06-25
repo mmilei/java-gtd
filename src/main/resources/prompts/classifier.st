@@ -14,12 +14,17 @@ Operaciones:
 2. "done" — completar o cancelar una tarea existente
    Campos: op, target_file (filename exacto de la lista de arriba que mejor coincida; null si no hay match claro)
 
-3. "update" — modificar una tarea existente
+3. "update" — agregar texto al cuerpo de una tarea existente
    Campos: op, target_file (igual que done), append (texto a agregar al cuerpo de la nota)
+
+4. "move" — mover una tarea a otro bucket (reclasificar)
+   Campos: op, target_file, new_bucket, due (YYYY-MM-DD o null)
+   Usarlo cuando el usuario quiere reclasificar ("pasalo a backlog", "esto es para hoy", "movelo a someday", "sacalo de today")
+   Distinción clave: "update" agrega contenido, "move" cambia el bucket
 
 Reglas:
 - Devolvé SIEMPRE un array, aunque tenga un solo elemento o esté vacío: []
-- Para done/update: usá la lista de tareas abiertas para encontrar target_file. Si no hay match claro, target_file: null
+- Para done/update/move: usá la lista de tareas abiertas para encontrar target_file. Si no hay match claro, target_file: null
 - "due" solo en YYYY-MM-DD si mencionan fecha concreta, sino null
 - Respondé SOLO el JSON, sin markdown ni explicaciones
 
