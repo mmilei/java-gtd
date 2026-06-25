@@ -79,4 +79,10 @@ public class BucketController {
     public Map<String, Object> stats() {
         return vault.stats();
     }
+
+    @GetMapping("/history")
+    public List<Map<String, Object>> history(
+            @RequestParam(defaultValue = "20") int limit) {
+        return vault.history(limit);
+    }
 }

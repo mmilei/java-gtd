@@ -155,6 +155,24 @@ public class VaultService {
         return Map.of("counts", counts, "total", total);
     }
 
+    public List<Map<String, Object>> history(int limit) {
+        List<Map<String, Object>> all = new ArrayList<>();
+        for (Path dir : List.of(actionsDir, referenceDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md"))
+                     .map(this::readFile)
+                     .filter(Objects::nonNull)
+                     .filter(m -> INACTIVE_STATUSES.contains(m.get("status")))
+                     .forEach(all::add);
+            } catch (IOException e) { /* directorio vacío, ignorar */ }
+        }
+        all.sort(Comparator.comparing(
+            m -> String.valueOf(m.getOrDefault("updated", m.getOrDefault("created", ""))),
+            Comparator.reverseOrder()
+        ));
+        return limit > 0 ? all.subList(0, Math.min(limit, all.size())) : all;
+    }
+
     public void moveBucket(String filename, String newBucket, String due) {
         Path file = resolveFile(filename);
         try {
