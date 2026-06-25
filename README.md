@@ -37,7 +37,19 @@ POST /api/chat
   }
 ```
 
-Items classified as `discard` are not filed but are logged to `.vault-meta/discard-log.jsonl` for later review. A two-level prompt strategy is used: lightweight prompt first, falling back to a more detailed one if the response fails to parse or everything comes back as `discard`/`now`.
+Items classified as `discard` are not filed but are logged to `.vault-meta/discard-log.jsonl` for later review. A two-level prompt strategy is used: lightweight prompt first, falling back to a more detailed one if the response fails to parse or everything comes back as `discard`/`now`. When the fallback triggers, `fallback: true` is returned:
+
+```
+POST /api/chat
+{"message": "algún día me gustaría aprender a tocar el piano"}
+
+→ {
+    "fallback": true,
+    "ops": [{ "op": "create", "filed": true, "bucket": "someday", "title": "Aprender a tocar el piano", "file": "20260624-184512-aprender-a-tocar-el-piano.md" }]
+  }
+```
+
+The lightweight prompt classified this as `discard` (no clear action), so the fallback prompt re-evaluated it and correctly filed it as `someday`.
 
 ---
 
