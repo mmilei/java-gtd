@@ -1,6 +1,12 @@
 # java-gtd
 
-REST API that classifies natural language input into GTD buckets and files the results as Markdown notes in an Obsidian vault.
+![Java](https://img.shields.io/badge/Java-21-blue?logo=openjdk)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen?logo=springboot)
+![Spring AI](https://img.shields.io/badge/Spring%20AI-1.0-green?logo=spring)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+![Tests](https://img.shields.io/badge/tests-27%20passing-success)
+
+REST API that classifies natural language input into GTD (Getting Things Done) buckets and files the results as Markdown notes in an Obsidian vault.
 
 Built with **Spring Boot 3** + **Spring AI** + **Groq** (Llama 3.3-70b).
 
@@ -53,6 +59,35 @@ The lightweight prompt classified this as `discard` (no clear action), so the fa
 
 ---
 
+## Architecture
+
+```
+HTTP request
+     │
+     ▼
+ChatController           ← parses request, dispatches ops
+     │
+     ▼
+ClassifierService        ← calls Groq via Spring AI
+  ├─ classifier.st       ← lightweight prompt (level 1)
+  └─ classifier-fallback.st  ← detailed prompt with examples (level 2, on parse failure)
+     │
+     ▼
+VaultService             ← reads/writes .md files with YAML frontmatter
+  └─ MarkdownSerializer  ← SnakeYAML parse/serialize, captures YAMLException
+     │
+     ▼
+Obsidian vault (plain Markdown files on disk)
+```
+
+**Key design decisions:**
+- **Two-level prompting:** cheap prompt first, expensive fallback only when needed. Reduces latency and cost on easy inputs.
+- **Plain Markdown output:** vault files are regular `.md` with YAML frontmatter — no database, no lock-in, readable by any editor.
+- **Multi-op in a single request:** one natural language message can create, complete, and update multiple items atomically.
+- **Virtual threads:** enabled via `spring.threads.virtual.enabled=true` for non-blocking I/O on file operations.
+
+---
+
 ## Endpoints
 
 | Method | Path | Description |
@@ -90,7 +125,7 @@ The lightweight prompt classified this as `discard` (no clear action), so the fa
 
 - Java 21+
 - Maven 3.9+
-- A [Groq](https://console.groq.com) API key
+- A [Groq](https://console.groq.com) API key (free tier works)
 
 ### Configuration
 
@@ -124,11 +159,19 @@ mvn spring-boot:run
 
 The server starts on `http://localhost:8080`.
 
+### Tests
+
+```bash
+mvn test
+```
+
+27 tests across 4 suites: `BucketControllerTest` (14), `ChatControllerTest` (6), `UndoControllerTest` (3), `VaultServiceTest` (4). All use `@WebMvcTest` with mocked dependencies; `VaultServiceTest` uses `@TempDir` for real filesystem I/O.
+
 ---
 
 ## Stack
 
 - [Spring Boot 3.3](https://spring.io/projects/spring-boot)
-- [Spring AI 1.0.0-M6](https://spring.io/projects/spring-ai) — OpenAI-compatible client
+- [Spring AI 1.0.0-M6](https://spring.io/projects/spring-ai) — OpenAI-compatible client pointed at Groq
 - [Groq](https://groq.com) — inference (Llama 3.3-70b-versatile)
 - [SnakeYAML](https://bitbucket.org/snakeyaml/snakeyaml) — frontmatter serialization
