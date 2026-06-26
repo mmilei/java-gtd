@@ -1,6 +1,12 @@
 # java-gtd
 
-REST API that classifies natural language input into GTD buckets and files the results as Markdown notes in an Obsidian vault.
+![Java](https://img.shields.io/badge/Java-21-blue?logo=openjdk)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen?logo=springboot)
+![Spring AI](https://img.shields.io/badge/Spring%20AI-1.0-green?logo=spring)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+![Tests](https://img.shields.io/badge/tests-27%20passing-success)
+
+REST API that classifies natural language input into GTD (Getting Things Done) buckets and files the results as Markdown notes in an Obsidian vault.
 
 Built with **Spring Boot 3** + **Spring AI** + **Groq** (Llama 3.3-70b).
 
@@ -14,11 +20,11 @@ One message can contain multiple tasks — create, done, update, move, edit, and
 
 ```
 POST /api/chat
-{"message": "llamar al médico la semana que viene"}
+{"message": "review the pull request before end of day"}
 
 → {
     "fallback": false,
-    "ops": [{ "op": "create", "filed": true, "bucket": "backlog", "title": "Llamar al médico", "file": "20260624-181203-llamar-al-medico.md" }]
+    "ops": [{ "op": "create", "filed": true, "bucket": "today", "title": "Review the pull request", "file": "20260624-181203-review-the-pull-request.md" }]
   }
 ```
 
@@ -26,13 +32,13 @@ Multi-task example:
 
 ```
 POST /api/chat
-{"message": "ya hice la cama, y al médico agregale que también hay que pedir turno para el dentista"}
+{"message": "I finished the code review, and add to the deployment task that we need to run the migration scripts first"}
 
 → {
     "fallback": false,
     "ops": [
-      { "op": "done",   "filed": true, "file": "20260624-173158-hacer-la-cama.md" },
-      { "op": "update", "filed": true, "file": "20260624-203748-llamar-al-medico.md", "appended": "también hay que pedir turno para el dentista" }
+      { "op": "done",   "filed": true, "file": "20260624-173158-code-review.md" },
+      { "op": "update", "filed": true, "file": "20260624-150342-deployment.md", "appended": "run migration scripts before deploying" }
     ]
   }
 ```
@@ -41,15 +47,44 @@ Items classified as `discard` are not filed but are logged to `.vault-meta/disca
 
 ```
 POST /api/chat
-{"message": "algún día me gustaría aprender a tocar el piano"}
+{"message": "someday I'd like to learn to play the guitar"}
 
 → {
     "fallback": true,
-    "ops": [{ "op": "create", "filed": true, "bucket": "someday", "title": "Aprender a tocar el piano", "file": "20260624-184512-aprender-a-tocar-el-piano.md" }]
+    "ops": [{ "op": "create", "filed": true, "bucket": "someday", "title": "Learn to play the guitar", "file": "20260624-184512-learn-to-play-the-guitar.md" }]
   }
 ```
 
 The lightweight prompt classified this as `discard` (no clear action), so the fallback prompt re-evaluated it and correctly filed it as `someday`.
+
+---
+
+## Architecture
+
+```
+HTTP request
+     │
+     ▼
+ChatController           ← parses request, dispatches ops
+     │
+     ▼
+ClassifierService        ← calls Groq via Spring AI
+  ├─ classifier.st       ← lightweight prompt (level 1)
+  └─ classifier-fallback.st  ← detailed prompt with examples (level 2, on parse failure)
+     │
+     ▼
+VaultService             ← reads/writes .md files with YAML frontmatter
+  └─ MarkdownSerializer  ← SnakeYAML parse/serialize, captures YAMLException
+     │
+     ▼
+Obsidian vault (plain Markdown files on disk)
+```
+
+**Key design decisions:**
+- **Two-level prompting:** cheap prompt first, expensive fallback only when needed. Reduces latency and cost on easy inputs.
+- **Plain Markdown output:** vault files are regular `.md` with YAML frontmatter — no database, no lock-in, readable by any editor.
+- **Multi-op in a single request:** one natural language message can create, complete, and update multiple items atomically.
+- **Virtual threads:** enabled via `spring.threads.virtual.enabled=true` for non-blocking I/O on file operations.
 
 ---
 
@@ -90,7 +125,7 @@ The lightweight prompt classified this as `discard` (no clear action), so the fa
 
 - Java 21+
 - Maven 3.9+
-- A [Groq](https://console.groq.com) API key
+- A [Groq](https://console.groq.com) API key (free tier works)
 
 ### Configuration
 
@@ -124,11 +159,19 @@ mvn spring-boot:run
 
 The server starts on `http://localhost:8080`.
 
+### Tests
+
+```bash
+mvn test
+```
+
+27 tests across 4 suites: `BucketControllerTest` (14), `ChatControllerTest` (6), `UndoControllerTest` (3), `VaultServiceTest` (4). All use `@WebMvcTest` with mocked dependencies; `VaultServiceTest` uses `@TempDir` for real filesystem I/O.
+
 ---
 
 ## Stack
 
 - [Spring Boot 3.3](https://spring.io/projects/spring-boot)
-- [Spring AI 1.0.0-M6](https://spring.io/projects/spring-ai) — OpenAI-compatible client
+- [Spring AI 1.0.0-M6](https://spring.io/projects/spring-ai) — OpenAI-compatible client pointed at Groq
 - [Groq](https://groq.com) — inference (Llama 3.3-70b-versatile)
 - [SnakeYAML](https://bitbucket.org/snakeyaml/snakeyaml) — frontmatter serialization
