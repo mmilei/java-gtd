@@ -20,11 +20,11 @@ One message can contain multiple tasks — create, done, update, move, edit, and
 
 ```
 POST /api/chat
-{"message": "call the doctor next week"}
+{"message": "review the pull request before end of day"}
 
 → {
     "fallback": false,
-    "ops": [{ "op": "create", "filed": true, "bucket": "backlog", "title": "Call the doctor", "file": "20260624-181203-call-the-doctor.md" }]
+    "ops": [{ "op": "create", "filed": true, "bucket": "today", "title": "Review the pull request", "file": "20260624-181203-review-the-pull-request.md" }]
   }
 ```
 
@@ -32,13 +32,13 @@ Multi-task example:
 
 ```
 POST /api/chat
-{"message": "I already made the bed, and add to the doctor's task that I also need to book a dentist appointment"}
+{"message": "I finished the code review, and add to the deployment task that we need to run the migration scripts first"}
 
 → {
     "fallback": false,
     "ops": [
-      { "op": "done",   "filed": true, "file": "20260624-173158-make-the-bed.md" },
-      { "op": "update", "filed": true, "file": "20260624-181203-call-the-doctor.md", "appended": "also book a dentist appointment" }
+      { "op": "done",   "filed": true, "file": "20260624-173158-code-review.md" },
+      { "op": "update", "filed": true, "file": "20260624-150342-deployment.md", "appended": "run migration scripts before deploying" }
     ]
   }
 ```
