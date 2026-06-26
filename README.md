@@ -20,11 +20,11 @@ One message can contain multiple tasks — create, done, update, move, edit, and
 
 ```
 POST /api/chat
-{"message": "llamar al médico la semana que viene"}
+{"message": "call the doctor next week"}
 
 → {
     "fallback": false,
-    "ops": [{ "op": "create", "filed": true, "bucket": "backlog", "title": "Llamar al médico", "file": "20260624-181203-llamar-al-medico.md" }]
+    "ops": [{ "op": "create", "filed": true, "bucket": "backlog", "title": "Call the doctor", "file": "20260624-181203-call-the-doctor.md" }]
   }
 ```
 
@@ -32,13 +32,13 @@ Multi-task example:
 
 ```
 POST /api/chat
-{"message": "ya hice la cama, y al médico agregale que también hay que pedir turno para el dentista"}
+{"message": "I already made the bed, and add to the doctor's task that I also need to book a dentist appointment"}
 
 → {
     "fallback": false,
     "ops": [
-      { "op": "done",   "filed": true, "file": "20260624-173158-hacer-la-cama.md" },
-      { "op": "update", "filed": true, "file": "20260624-203748-llamar-al-medico.md", "appended": "también hay que pedir turno para el dentista" }
+      { "op": "done",   "filed": true, "file": "20260624-173158-make-the-bed.md" },
+      { "op": "update", "filed": true, "file": "20260624-181203-call-the-doctor.md", "appended": "also book a dentist appointment" }
     ]
   }
 ```
@@ -47,11 +47,11 @@ Items classified as `discard` are not filed but are logged to `.vault-meta/disca
 
 ```
 POST /api/chat
-{"message": "algún día me gustaría aprender a tocar el piano"}
+{"message": "someday I'd like to learn to play the guitar"}
 
 → {
     "fallback": true,
-    "ops": [{ "op": "create", "filed": true, "bucket": "someday", "title": "Aprender a tocar el piano", "file": "20260624-184512-aprender-a-tocar-el-piano.md" }]
+    "ops": [{ "op": "create", "filed": true, "bucket": "someday", "title": "Learn to play the guitar", "file": "20260624-184512-learn-to-play-the-guitar.md" }]
   }
 ```
 
