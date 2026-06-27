@@ -31,6 +31,11 @@ Operaciones:
    Campos: op, target_file
    Distinto de "done": done = completé la tarea, dismiss = decidí no hacerla
 
+7. "patch" — modificar tags o fechas de una tarea existente sin cambiar body ni bucket
+   Campos: op, target_file, tags (array completo que reemplaza el existente; siempre incluir "gtd" y "action"), due (YYYY-MM-DD o null), today_since (YYYY-MM-DD o null)
+   Usarlo cuando el usuario quiere cambiar tags o fechas ("agregá el tag urgente", "poné fecha mañana", "quitá el tag salud", "cambié la fecha")
+   Distinción: "move" cambia el bucket, "patch" cambia metadata sin mover la tarea
+
 Reglas:
 - Devolvé SIEMPRE un array, aunque tenga un solo elemento o esté vacío: []
 - Para done/update/move/edit/dismiss: usá la lista de tareas abiertas para target_file. null si no hay match claro

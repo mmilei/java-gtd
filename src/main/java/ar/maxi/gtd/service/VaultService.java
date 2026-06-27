@@ -41,6 +41,7 @@ public class VaultService {
         } catch (IOException e) {
             log.error("Could not create vault directories: {}", e.getMessage());
         }
+        migrateTodaySince();
     }
 
     public String write(Map<String, Object> item) {
@@ -61,6 +62,7 @@ public class VaultService {
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
         if (item.get("delegado_a") != null) frontmatter.put("delegado_a", item.get("delegado_a"));
         frontmatter.put("tags", item.getOrDefault("tags", List.of("gtd")));
+        if ("today".equals(bucket)) frontmatter.put("today_since", LocalDate.now().toString());
 
         item.entrySet().stream()
             .filter(e -> !CLASSIFIER_KEYS.contains(e.getKey()) && !frontmatter.containsKey(e.getKey()))
@@ -137,6 +139,13 @@ public class VaultService {
         mutate(filename, item -> item.put("_body_override", newBody));
     }
 
+    public void patchMeta(String filename, Map<String, Object> meta) {
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since");
+        mutate(filename, item -> meta.forEach((k, v) -> {
+            if (allowed.contains(k) && v != null) item.put(k, v);
+        }));
+    }
+
     public Map<String, Object> read(String filename) {
         Path file = resolveFile(filename);
         Map<String, Object> item = readFile(file);
@@ -184,6 +193,9 @@ public class VaultService {
             item.put("bucket", newBucket);
             if (due != null && !due.isBlank()) item.put("due", due);
             if ("reference".equals(newBucket)) item.put("type", "reference");
+            if ("today".equals(newBucket) && !item.containsKey("today_since")) {
+                item.put("today_since", LocalDate.now().toString());
+            }
             item.put("updated", LocalDate.now().toString());
             String newContent = MarkdownSerializer.serialize(item, body);
 
@@ -219,6 +231,29 @@ public class VaultService {
     }
 
     // ─── helpers ────────────────────────────────────────────────────────────
+
+    private void migrateTodaySince() {
+        try (Stream<Path> files = Files.list(actionsDir)) {
+            files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
+                try {
+                    String content = Files.readString(p);
+                    Map<String, Object> item = MarkdownSerializer.parse(content);
+                    if ("today".equals(item.get("bucket")) && item.get("today_since") == null) {
+                        String created = (String) item.get("created");
+                        if (created != null) {
+                            String body = (String) item.remove("body");
+                            item.put("today_since", created);
+                            Files.writeString(p, MarkdownSerializer.serialize(item, body));
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("migrateTodaySince: skipping {}: {}", p.getFileName(), e.getMessage());
+                }
+            });
+        } catch (IOException e) {
+            log.warn("migrateTodaySince: could not list actions dir: {}", e.getMessage());
+        }
+    }
 
     private synchronized void mutate(String filename, java.util.function.Consumer<Map<String, Object>> modifier) {
         Path file = resolveFile(filename);

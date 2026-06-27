@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 
 @RestController
 @RequestMapping("/api")
@@ -42,6 +43,14 @@ public class BucketController {
     public ResponseEntity<Map<String, Object>> dismiss(@PathVariable String filename) {
         vault.dismissItem(filename);
         return ResponseEntity.ok(Map.of("dismissed", true, "file", filename));
+    }
+
+    @PutMapping("/items/{filename}/meta")
+    public ResponseEntity<Map<String, Object>> patchMeta(
+            @PathVariable String filename,
+            @RequestBody Map<String, Object> meta) {
+        vault.patchMeta(filename, meta);
+        return ResponseEntity.ok(Map.of("updated", true, "file", filename));
     }
 
     @PutMapping("/items/{filename}/body")
