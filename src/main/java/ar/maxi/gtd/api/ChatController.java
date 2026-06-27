@@ -62,8 +62,9 @@ public class ChatController {
                 case "create" -> handleCreate(op);
                 case "done"   -> handleDone(op);
                 case "update" -> handleUpdate(op);
-                case "move"    -> handleMove(op);
-                case "edit"    -> handleEdit(op);
+                case "move"   -> handleMove(op);
+                case "edit"   -> handleEdit(op);
+                case "patch"  -> handlePatch(op);
                 case "dismiss" -> handleDismissOp(op);
                 default       -> Map.of("op", opType, "filed", false, "error", "op desconocido: " + opType);
             };
@@ -131,6 +132,19 @@ public class ChatController {
         String due = (String) op.get("due");
         vault.moveBucket(targetFile, newBucket, due);
         return Map.of("op", "move", "filed", true, "file", targetFile, "new_bucket", newBucket);
+    }
+
+    private Map<String, Object> handlePatch(Map<String, Object> op) {
+        String targetFile = (String) op.get("target_file");
+        if (targetFile == null) {
+            return Map.of("op", "patch", "filed", false, "error", "no match encontrado");
+        }
+        Map<String, Object> meta = new java.util.HashMap<>();
+        if (op.containsKey("tags"))        meta.put("tags", op.get("tags"));
+        if (op.containsKey("due"))         meta.put("due", op.get("due"));
+        if (op.containsKey("today_since")) meta.put("today_since", op.get("today_since"));
+        vault.patchMeta(targetFile, meta);
+        return Map.of("op", "patch", "filed", true, "file", targetFile);
     }
 
     private Map<String, Object> handleUpdate(Map<String, Object> op) {

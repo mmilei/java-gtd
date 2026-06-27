@@ -31,6 +31,9 @@ OPERACIONES disponibles:
   Distinción: "update" agrega, "edit" reemplaza todo el body
 - "dismiss": descartar una tarea. Campos: op, target_file
   done = la completé; dismiss = decidí no hacerla
+- "patch": modificar tags o fechas sin cambiar body ni bucket. Campos: op, target_file, tags (array completo, siempre incluir "gtd"/"action"), due (YYYY-MM-DD o null), today_since (YYYY-MM-DD o null)
+  Usarlo cuando el usuario cambia metadata: "agregá el tag urgente", "poné fecha para mañana", "quitá el tag salud"
+  Distinción: "move" cambia el bucket, "patch" cambia solo la metadata
 
 EJEMPLOS:
 - "comprar pan" → [{"op":"create","bucket":"today","title":"Comprar pan","body":"","due":null,"delegado_a":null,"tags":[]}]
