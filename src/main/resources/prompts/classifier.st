@@ -10,6 +10,10 @@ Operaciones:
    Campos: op, bucket, title, body, due (YYYY-MM-DD o null), delegado_a (null o nombre), tags [], message (solo para now/discard)
    Árbol: ¿accionable? NO → ¿guardar? NO→discard SÍ→someday o reference | SÍ → ¿2min? SÍ→now | ¿delegar? SÍ→waiting | ¿hoy? SÍ→today | NO→backlog
    Buckets: today, backlog, waiting, someday, reference, now (no se guarda), discard (no se guarda)
+   Tags: siempre incluir "gtd" + al menos 1 tag de contexto inferido del título:
+     comprar/mercado/ferretería → "compras" | médico/salud/remedios/gym → "salud" | llamar/mensaje → "llamadas"
+     trabajo/código/PR/reunión → "trabajo" | pagar/factura/banco → "finanzas" | casa/baño/heladera → "hogar"
+     aprender/libro/curso → "aprendizaje" | gato/mascota → "mascotas"
 
 2. "done" — completar o cancelar una tarea existente
    Campos: op, target_file (filename exacto de la lista de arriba que mejor coincida; null si no hay match claro)

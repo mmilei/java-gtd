@@ -1,5 +1,6 @@
 package ar.maxi.gtd.api;
 
+import ar.maxi.gtd.service.MarkdownifyService;
 import ar.maxi.gtd.service.VaultService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,9 +14,11 @@ import java.util.HashMap;
 public class BucketController {
 
     private final VaultService vault;
+    private final MarkdownifyService markdownify;
 
-    public BucketController(VaultService vault) {
+    public BucketController(VaultService vault, MarkdownifyService markdownify) {
         this.vault = vault;
+        this.markdownify = markdownify;
     }
 
     @GetMapping("/today")
@@ -82,6 +85,25 @@ public class BucketController {
         if (bucket == null) return ResponseEntity.badRequest().body(Map.of("error", "bucket is required"));
         vault.moveBucket(filename, bucket, body.get("due"));
         return ResponseEntity.ok(Map.of("moved", true, "file", filename, "bucket", bucket));
+    }
+
+    @PostMapping("/items/{filename}/markdownify")
+    public ResponseEntity<Map<String, Object>> markdownify(@PathVariable String filename) {
+        try {
+            Map<String, Object> item = vault.read(filename);
+            String title = (String) item.getOrDefault("title", "");
+            String body  = (String) item.getOrDefault("body", "");
+            MarkdownifyService.EnrichResult result = markdownify.enrich(title, body);
+            vault.replaceBody(filename, result.body());
+            vault.patchMeta(filename, Map.of("tags", result.tags(), "markdownified", true));
+            return ResponseEntity.ok(Map.of(
+                "file", filename,
+                "body", result.body(),
+                "tags", result.tags()
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     @GetMapping("/stats")

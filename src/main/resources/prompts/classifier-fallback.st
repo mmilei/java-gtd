@@ -21,6 +21,7 @@ Tareas abiertas actuales:
 
 OPERACIONES disponibles:
 - "create": nueva tarea. Campos: op, bucket, title, body, due (YYYY-MM-DD o null), delegado_a (null o nombre), tags []
+  Tags: siempre ["gtd"] + 1 tag de contexto del título: comprar→"compras", médico/salud→"salud", llamar→"llamadas", trabajo/código→"trabajo", pagar→"finanzas", casa/hogar→"hogar", aprender→"aprendizaje"
 - "done": completar tarea existente. Campos: op, target_file (de la lista de tareas abiertas, o null)
 - "update": agregar texto al cuerpo de una tarea existente. Campos: op, target_file, append
 - "move": mover una tarea a otro bucket. Campos: op, target_file, new_bucket, due (o null)
@@ -36,9 +37,9 @@ OPERACIONES disponibles:
   Distinción: "move" cambia el bucket, "patch" cambia solo la metadata
 
 EJEMPLOS:
-- "comprar pan" → [{"op":"create","bucket":"today","title":"Comprar pan","body":"","due":null,"delegado_a":null,"tags":[]}]
-- "algún día aprender piano" → [{"op":"create","bucket":"someday","title":"Aprender piano","body":"","due":null,"delegado_a":null,"tags":[]}]
-- "la reunión de ayer fue bien" → [{"op":"create","bucket":"reference","title":"Reunión","body":"La reunión fue bien","due":null,"delegado_a":null,"tags":[]}]
+- "comprar pan" → [{"op":"create","bucket":"today","title":"Comprar pan","body":"","due":null,"delegado_a":null,"tags":["gtd","compras"]}]
+- "algún día aprender piano" → [{"op":"create","bucket":"someday","title":"Aprender piano","body":"","due":null,"delegado_a":null,"tags":["gtd","aprendizaje"]}]
+- "la reunión de ayer fue bien" → [{"op":"create","bucket":"reference","title":"Reunión","body":"La reunión fue bien","due":null,"delegado_a":null,"tags":["gtd","trabajo"]}]
 
 REGLAS:
 - Devolvé SIEMPRE un array, aunque tenga un solo elemento

@@ -23,21 +23,26 @@ public class VaultService {
 
     private static final Logger log = LoggerFactory.getLogger(VaultService.class);
 
-    private final Path actionsDir;
-    private final Path referenceDir;
+    private final String vaultPath;
+    private final Path inboxDir;
+    private final Path somedayDir;
+    private final Path resourcesDir;
     private final UndoStack undoStack;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message");
+    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
 
     public VaultService(@Value("${gtd.vault.path}") String vaultPath, UndoStack undoStack) {
-        this.actionsDir = Path.of(vaultPath, "wiki/gtd/actions");
-        this.referenceDir = Path.of(vaultPath, "wiki/references");
+        this.vaultPath    = vaultPath;
+        this.inboxDir     = Path.of(vaultPath, "brain/inbox");
+        this.somedayDir   = Path.of(vaultPath, "brain/someday");
+        this.resourcesDir = Path.of(vaultPath, "brain/resources");
         this.undoStack = undoStack;
         try {
-            Files.createDirectories(actionsDir);
-            Files.createDirectories(referenceDir);
+            Files.createDirectories(inboxDir);
+            Files.createDirectories(somedayDir);
+            Files.createDirectories(resourcesDir);
         } catch (IOException e) {
             log.error("Could not create vault directories: {}", e.getMessage());
         }
@@ -46,7 +51,7 @@ public class VaultService {
 
     public String write(Map<String, Object> item) {
         String bucket = (String) item.get("bucket");
-        Path dir = "reference".equals(bucket) ? referenceDir : actionsDir;
+        Path dir = dirFor(bucket);
 
         String timestamp = TIMESTAMP.format(LocalDateTime.now());
         String slug = toSlug((String) item.getOrDefault("title", "item"));
@@ -61,7 +66,9 @@ public class VaultService {
         frontmatter.put("created", LocalDate.now().toString());
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
         if (item.get("delegado_a") != null) frontmatter.put("delegado_a", item.get("delegado_a"));
-        frontmatter.put("tags", item.getOrDefault("tags", List.of("gtd")));
+        List<String> tags = new ArrayList<>((List<String>) item.getOrDefault("tags", List.of()));
+        if (!tags.contains("gtd")) tags.add(0, "gtd");
+        frontmatter.put("tags", tags);
         if ("today".equals(bucket)) frontmatter.put("today_since", LocalDate.now().toString());
 
         item.entrySet().stream()
@@ -82,7 +89,7 @@ public class VaultService {
     }
 
     public List<Map<String, Object>> list(String bucket) {
-        Path dir = "reference".equals(bucket) ? referenceDir : actionsDir;
+        Path dir = dirFor(bucket);
         try (Stream<Path> files = Files.list(dir)) {
             return files
                 .filter(p -> p.toString().endsWith(".md"))
@@ -140,7 +147,7 @@ public class VaultService {
     }
 
     public void patchMeta(String filename, Map<String, Object> meta) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified");
         mutate(filename, item -> meta.forEach((k, v) -> {
             if (allowed.contains(k) && v != null) item.put(k, v);
         }));
@@ -164,9 +171,65 @@ public class VaultService {
         return Map.of("counts", counts, "total", total);
     }
 
+    public List<Map<String, Object>> listStaleToday(int daysThreshold) {
+        LocalDate cutoff = LocalDate.now().minusDays(daysThreshold);
+        return list("today").stream()
+            .filter(m -> {
+                String since = String.valueOf(m.getOrDefault("today_since", ""));
+                if (since.isBlank()) return false;
+                try { return LocalDate.parse(since).isBefore(cutoff) || LocalDate.parse(since).isEqual(cutoff); }
+                catch (Exception e) { return false; }
+            })
+            .collect(Collectors.toList());
+    }
+
+    public List<Map<String, Object>> listDueSoon(int days) {
+        LocalDate today = LocalDate.now();
+        LocalDate limit = today.plusDays(days);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (String bucket : List.of("today", "backlog", "waiting")) {
+            list(bucket).stream()
+                .filter(m -> {
+                    String due = String.valueOf(m.getOrDefault("due", ""));
+                    if (due.isBlank() || "null".equals(due)) return false;
+                    try {
+                        LocalDate d = LocalDate.parse(due);
+                        return !d.isBefore(today) && !d.isAfter(limit);
+                    } catch (Exception e) { return false; }
+                })
+                .forEach(result::add);
+        }
+        result.sort(Comparator.comparing(m -> String.valueOf(m.getOrDefault("due", ""))));
+        return result;
+    }
+
+    public List<Map<String, Object>> listCompletedSince(int days) {
+        LocalDate cutoff = LocalDate.now().minusDays(days);
+        List<Map<String, Object>> all = new ArrayList<>();
+        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md"))
+                     .map(this::readFile)
+                     .filter(Objects::nonNull)
+                     .filter(m -> INACTIVE_STATUSES.contains(String.valueOf(m.getOrDefault("status", ""))))
+                     .filter(m -> {
+                         String updated = String.valueOf(m.getOrDefault("updated", m.getOrDefault("created", "")));
+                         try { return !LocalDate.parse(updated).isBefore(cutoff); }
+                         catch (Exception e) { return false; }
+                     })
+                     .forEach(all::add);
+            } catch (IOException e) { /* directorio vacío, ignorar */ }
+        }
+        all.sort(Comparator.comparing(
+            m -> String.valueOf(m.getOrDefault("updated", "")),
+            Comparator.reverseOrder()
+        ));
+        return all;
+    }
+
     public List<Map<String, Object>> history(int limit) {
         List<Map<String, Object>> all = new ArrayList<>();
-        for (Path dir : List.of(actionsDir, referenceDir)) {
+        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md"))
                      .map(this::readFile)
@@ -199,8 +262,9 @@ public class VaultService {
             item.put("updated", LocalDate.now().toString());
             String newContent = MarkdownSerializer.serialize(item, body);
 
-            if ("reference".equals(newBucket) && file.getParent().equals(actionsDir)) {
-                Path dest = referenceDir.resolve(file.getFileName());
+            Path newDir = dirFor(newBucket);
+            if (!file.getParent().equals(newDir)) {
+                Path dest = newDir.resolve(file.getFileName());
                 Files.writeString(dest, newContent);
                 Files.delete(file);
             } else {
@@ -212,8 +276,7 @@ public class VaultService {
     }
 
     public void logDiscard(String message, List<Map<String, Object>> ops) {
-        Path logFile = actionsDir.getParent().getParent().getParent()
-            .resolve(".vault-meta/discard-log.jsonl");
+        Path logFile = Path.of(this.vaultPath).resolve(".vault-meta/discard-log.jsonl");
         try {
             Files.createDirectories(logFile.getParent());
             Map<String, Object> entry = new LinkedHashMap<>();
@@ -232,26 +295,36 @@ public class VaultService {
 
     // ─── helpers ────────────────────────────────────────────────────────────
 
+    private Path dirFor(String bucket) {
+        return switch (bucket) {
+            case "reference" -> resourcesDir;
+            case "someday"   -> somedayDir;
+            default          -> inboxDir;
+        };
+    }
+
     private void migrateTodaySince() {
-        try (Stream<Path> files = Files.list(actionsDir)) {
-            files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
-                try {
-                    String content = Files.readString(p);
-                    Map<String, Object> item = MarkdownSerializer.parse(content);
-                    if ("today".equals(item.get("bucket")) && item.get("today_since") == null) {
-                        String created = (String) item.get("created");
-                        if (created != null) {
-                            String body = (String) item.remove("body");
-                            item.put("today_since", created);
-                            Files.writeString(p, MarkdownSerializer.serialize(item, body));
+        for (Path dir : List.of(inboxDir, somedayDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
+                    try {
+                        String content = Files.readString(p);
+                        Map<String, Object> item = MarkdownSerializer.parse(content);
+                        if ("today".equals(item.get("bucket")) && item.get("today_since") == null) {
+                            String created = (String) item.get("created");
+                            if (created != null) {
+                                String body = (String) item.remove("body");
+                                item.put("today_since", created);
+                                Files.writeString(p, MarkdownSerializer.serialize(item, body));
+                            }
                         }
+                    } catch (Exception e) {
+                        log.warn("migrateTodaySince: skipping {}: {}", p.getFileName(), e.getMessage());
                     }
-                } catch (Exception e) {
-                    log.warn("migrateTodaySince: skipping {}: {}", p.getFileName(), e.getMessage());
-                }
-            });
-        } catch (IOException e) {
-            log.warn("migrateTodaySince: could not list actions dir: {}", e.getMessage());
+                });
+            } catch (IOException e) {
+                log.warn("migrateTodaySince: could not list {}: {}", dir, e.getMessage());
+            }
         }
     }
 
@@ -280,10 +353,10 @@ public class VaultService {
         if (!filename.matches("[\\w.\\-]+\\.md")) {
             throw new IllegalArgumentException("Filename inválido: " + filename);
         }
-        Path inActions = actionsDir.resolve(filename);
-        if (Files.exists(inActions)) return inActions;
-        Path inRef = referenceDir.resolve(filename);
-        if (Files.exists(inRef)) return inRef;
+        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+            Path p = dir.resolve(filename);
+            if (Files.exists(p)) return p;
+        }
         throw new IllegalArgumentException("Archivo no encontrado: " + filename);
     }
 
