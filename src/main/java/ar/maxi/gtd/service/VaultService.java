@@ -66,8 +66,8 @@ public class VaultService {
         frontmatter.put("created", LocalDate.now().toString());
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
         if (item.get("delegado_a") != null) frontmatter.put("delegado_a", item.get("delegado_a"));
-        List<String> tags = new ArrayList<>((List<String>) item.getOrDefault("tags", List.of()));
-        if (!tags.contains("gtd")) tags.add(0, "gtd");
+        List<String> tags = tagsFrom(item);
+        normalizeTypeTags(tags, bucket);
         frontmatter.put("tags", tags);
         if ("today".equals(bucket)) frontmatter.put("today_since", LocalDate.now().toString());
 
@@ -255,7 +255,14 @@ public class VaultService {
             String body = (String) item.remove("body");
             item.put("bucket", newBucket);
             if (due != null && !due.isBlank()) item.put("due", due);
-            if ("reference".equals(newBucket)) item.put("type", "reference");
+            if ("reference".equals(newBucket)) {
+                item.put("type", "reference");
+            } else if ("reference".equals(String.valueOf(item.getOrDefault("type", "")))) {
+                item.put("type", "action");
+            }
+            List<String> tags = tagsFrom(item);
+            normalizeTypeTags(tags, newBucket);
+            item.put("tags", tags);
             if ("today".equals(newBucket) && !item.containsKey("today_since")) {
                 item.put("today_since", LocalDate.now().toString());
             }
@@ -367,6 +374,24 @@ public class VaultService {
             return map;
         } catch (IOException e) {
             return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> tagsFrom(Map<String, Object> item) {
+        Object raw = item.get("tags");
+        List<String> tags = (raw instanceof List<?>) ? new ArrayList<>((List<String>) raw) : new ArrayList<>();
+        if (!tags.contains("gtd")) tags.add(0, "gtd");
+        return tags;
+    }
+
+    private static void normalizeTypeTags(List<String> tags, String bucket) {
+        if ("reference".equals(bucket)) {
+            tags.remove("action");
+            if (!tags.contains("reference")) tags.add("reference");
+        } else {
+            tags.remove("reference");
+            if (!tags.contains("action")) tags.add("action");
         }
     }
 
