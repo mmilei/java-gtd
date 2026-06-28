@@ -1,104 +1,104 @@
 # TODO — java-gtd
 
-Este archivo crece con el proyecto. Si sos un agente que está trabajando en este repo, leelo antes de arrancar y actualizalo cuando termines algo o detectes algo pendiente.
+This file grows with the project. If you're an agent working on this repo, read it before starting and update it when you finish something or spot a gap.
 
 ---
 
-## Backend — este repo
+## Backend — this repo
 
-### Ideas / Futuro
+### Ideas / Future
 
-- **Whisper local (privacidad)**: hacer configurable el proveedor de transcripción. Hoy usa Groq Whisper (audio sale a la API). Futuro: soportar `whisper.cpp` corriendo localmente con su modo servidor (`--port 8081`), apuntando Spring AI a `http://localhost:8081` como `base-url` alternativo para audio. El audio nunca saldría de la sesión local. Activable con una propiedad `gtd.transcription.provider=local|groq` en `application-local.properties`.
-
----
-
-## Frontend — Referencias y Tags (diseño conceptual)
-
-Inspirado en cómo Obsidian trata el conocimiento: los tags no son solo etiquetas,
-son el tejido conectivo entre ideas. Las referencias no son solo archivos muertos,
-son el segundo cerebro con contexto acumulado.
-
-### El problema actual
-Las referencias viven en una solapa más del sidebar, tratadas como tareas sin check.
-Los tags aparecen como pills decorativas pero no hacen nada. Son datos tirados.
+- **Local Whisper (privacy)**: make the transcription provider configurable. Currently uses Groq Whisper (audio leaves the local session). Future: support `whisper.cpp` running locally in server mode (`--port 8081`), pointing Spring AI to `http://localhost:8081` as an alternative `base-url` for audio. Audio would never leave the local machine. Activatable via `gtd.transcription.provider=local|groq` in `application-local.properties`.
 
 ---
 
-### Concepto 1 — Panel de Referencias deslizable
+## Frontend — References and Tags (conceptual design)
 
-Un panel que se abre desde la derecha (slide-in, `width: 420px`) sin salir de la app.
-Se activa con un botón fijo en el header o con `R` como atajo de teclado.
+Inspired by how Obsidian treats knowledge: tags are not just labels,
+they are the connective tissue between ideas. References are not dead files,
+they are a second brain with accumulated context.
 
-**Vista interna:**
-- Search bar arriba (filtra por título + body en tiempo real, solo client-side)
-- Cards más ricas que las del sidebar: 3 líneas de body, fecha, todos los tags visibles
-- Agrupadas por tag principal (el primer tag no-gtd del item)
-- Click en card → abre el modal de edición existente
-
-**Por qué es mejor que una solapa:**
-El sidebar tiene poco espacio y las referencias necesitan más cuerpo para ser útiles.
-Un panel lateral dedicado convive con el kanban sin pisar nada.
+### The current problem
+References live in just another sidebar tab, treated like tasks without a checkbox.
+Tags appear as decorative pills but do nothing. Wasted data.
 
 ---
 
-### Concepto 2 — Tag Bar interactiva
+### Concept 1 — Slide-in References Panel
 
-Una fila horizontal de pills sobre la lista de items (debajo de los tabs de bucket).
-Muestra todos los tags únicos del bucket actual, ordenados por frecuencia.
+A panel that opens from the right (`width: 420px`) without leaving the app.
+Triggered by a fixed header button or the `R` keyboard shortcut.
 
-**Comportamiento:**
-- Click en un tag → filtra los items del bucket actual a los que tengan ese tag
-- Click en el mismo tag → deselecciona (vuelve a mostrar todos)
-- Multi-select: Shift+click → AND entre tags (solo items con AMBOS tags)
-- Pill con número: `ferrería (2)` indica cuántos items en el bucket tienen ese tag
+**Inner view:**
+- Search bar at the top (filters by title + body in real time, client-side only)
+- Richer cards than the sidebar: 3 body lines, date, all tags visible
+- Grouped by primary tag (the first non-gtd tag on the item)
+- Click on card → opens the existing edit modal
 
-**Variante cross-bucket:**
-Un modo especial "Ver por tag" que al clickear un tag muestra todos los items
-de TODOS los buckets que lo tienen, agrupados por bucket. Como una búsqueda federada.
-
----
-
-### Concepto 3 — Vista Galaxy (referencias como red)
-
-Panel de referencias con un toggle `Lista / Red`. En modo Red:
-- Grafo SVG/Canvas simple: nodos = referencias, aristas = tags compartidos
-- Los nodos se agrupan por atracción gravitacional según tags en común
-- Click en nodo → highlight de sus conexiones + abre el modal
-- Hover en nodo → tooltip con título + snippet del body
-
-Implementación: sin D3 para no agregar deps. Canvas 2D con física simple
-(spring force entre nodos con tags en común, repulsión general). ~200 líneas.
-
-**Por qué esto es poderoso:** visualizás clusters de conocimiento.
-"gato" y "heladera" no tienen nada que ver. "ferrería" y "heladera" sí.
-El grafo te lo muestra sin que tengas que pensar.
+**Why it's better than a tab:**
+The sidebar has limited space and references need more body to be useful.
+A dedicated side panel coexists with the kanban without overlapping anything.
 
 ---
 
-### Concepto 4 — Tag como contexto de captura
+### Concept 2 — Interactive Tag Bar
 
-Cuando escribís en el chat y usás `#tag`, el frontend lo resalta en tiempo real
-(como Obsidian con los wikilinks). Al enviar, ese tag se sugiere al LLM en el prompt
-para que lo considere al clasificar. Pequeño cambio en el prompt del chat.
+A horizontal row of pills above the item list (below the bucket tabs).
+Shows all unique tags in the current bucket, sorted by frequency.
+
+**Behavior:**
+- Click a tag → filters current bucket items to those with that tag
+- Click the same tag again → deselects (shows all again)
+- Multi-select: Shift+click → AND between tags (only items with BOTH tags)
+- Pill with count: `hardware-store (2)` shows how many items in the bucket have that tag
+
+**Cross-bucket variant:**
+A special "View by tag" mode that, when clicking a tag, shows all items
+across ALL buckets that have it, grouped by bucket. Like a federated search.
 
 ---
 
-### Orden de implementación sugerido
+### Concept 3 — Galaxy View (references as a network)
 
-1. **Tag Bar** (Concepto 2) — mayor impacto, menor esfuerzo. Solo frontend, datos ya existen.
-2. **Panel de Referencias** (Concepto 1) — segundo. Necesita un poco de CSS y lógica de slide.
-3. **Tag cross-bucket** (variante del 2) — tercero. Requiere agregar endpoint `GET /api/tags` en backend.
-4. **Vista Galaxy** (Concepto 3) — último. El más espectacular, requiere más tiempo.
+References panel with a `List / Network` toggle. In Network mode:
+- Simple SVG/Canvas graph: nodes = references, edges = shared tags
+- Nodes cluster by gravitational attraction based on shared tags
+- Click on node → highlights its connections + opens the modal
+- Hover on node → tooltip with title + body snippet
+
+Implementation: no D3 to avoid adding deps. Plain 2D Canvas with simple physics
+(spring force between nodes with shared tags, general repulsion). ~200 lines.
+
+**Why this is powerful:** you see knowledge clusters emerge.
+"cat" and "fridge" have nothing in common. "hardware-store" and "fridge" might.
+The graph shows you without you having to think about it.
 
 ---
 
-### Backend necesario para Tag cross-bucket
+### Concept 4 — Tag as capture context
 
-Nuevo endpoint `GET /api/tags` → devuelve:
+When typing in the chat and using `#tag`, the frontend highlights it in real time
+(like Obsidian wikilinks). On send, that tag is suggested to the LLM in the prompt
+so it factors it into classification. Small change to the chat prompt.
+
+---
+
+### Suggested implementation order
+
+1. **Tag Bar** (Concept 2) — highest impact, lowest effort. Frontend only, data already exists.
+2. **References Panel** (Concept 1) — second. Needs some CSS and slide logic.
+3. **Cross-bucket tag** (variant of 2) — third. Requires adding `GET /api/tags` endpoint in backend.
+4. **Galaxy View** (Concept 3) — last. Most spectacular, requires more time.
+
+---
+
+### Backend needed for cross-bucket tags
+
+New endpoint `GET /api/tags` → returns:
 ```json
 {
-  "ferrería": { "today": 0, "backlog": 2, "waiting": 0, "someday": 0, "reference": 1 },
-  "gato":     { "today": 0, "backlog": 1, "waiting": 0, "someday": 0, "reference": 0 }
+  "hardware-store": { "today": 0, "backlog": 2, "waiting": 0, "someday": 0, "reference": 1 },
+  "cat":            { "today": 0, "backlog": 1, "waiting": 0, "someday": 0, "reference": 0 }
 }
 ```
-Calculable en `VaultService` leyendo los items que ya se tienen.
+Computable in `VaultService` from the items already loaded.
