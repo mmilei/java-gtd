@@ -15,8 +15,9 @@ class VaultServiceTest {
     void shouldCreateVaultDirectoriesOnStartup(@TempDir Path tempDir) {
         new VaultService(tempDir.toString(), new UndoStack());
 
-        assertThat(tempDir.resolve("wiki/gtd/actions")).isDirectory();
-        assertThat(tempDir.resolve("wiki/references")).isDirectory();
+        assertThat(tempDir.resolve("brain/inbox")).isDirectory();
+        assertThat(tempDir.resolve("brain/someday")).isDirectory();
+        assertThat(tempDir.resolve("brain/resources")).isDirectory();
     }
 
     @Test
@@ -37,8 +38,9 @@ class VaultServiceTest {
 
     @Test
     void shouldNotFailIfDirectoriesAlreadyExist(@TempDir Path tempDir) throws Exception {
-        Files.createDirectories(tempDir.resolve("wiki/gtd/actions"));
-        Files.createDirectories(tempDir.resolve("wiki/references"));
+        Files.createDirectories(tempDir.resolve("brain/inbox"));
+        Files.createDirectories(tempDir.resolve("brain/someday"));
+        Files.createDirectories(tempDir.resolve("brain/resources"));
 
         org.junit.jupiter.api.Assertions.assertDoesNotThrow(
             () -> new VaultService(tempDir.toString(), new UndoStack())

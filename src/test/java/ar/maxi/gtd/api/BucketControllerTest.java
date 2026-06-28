@@ -1,5 +1,6 @@
 package ar.maxi.gtd.api;
 
+import ar.maxi.gtd.service.MarkdownifyService;
 import ar.maxi.gtd.service.VaultService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ class BucketControllerTest {
 
     @Autowired MockMvc mvc;
     @MockBean VaultService vault;
+    @MockBean MarkdownifyService markdownify;
 
     private static final String FILE = "20260625-120000-test.md";
 

@@ -102,7 +102,13 @@ public class ClassifierService {
 
     private String serializeTasks(List<Map<String, Object>> openTasks) {
         try {
-            return openTasks.isEmpty() ? "[]" : objectMapper.writeValueAsString(openTasks);
+            if (openTasks.isEmpty()) return "[]";
+            String full = objectMapper.writeValueAsString(openTasks);
+            if (full.length() <= 6000) return full;
+            // Vault demasiado grande: truncar para no explotar el rate limit de Groq
+            List<Map<String, Object>> trimmed = openTasks.subList(0, Math.min(80, openTasks.size()));
+            log.warn("open_tasks truncated to {} items (original {} chars)", trimmed.size(), full.length());
+            return objectMapper.writeValueAsString(trimmed);
         } catch (Exception e) {
             return "[]";
         }
