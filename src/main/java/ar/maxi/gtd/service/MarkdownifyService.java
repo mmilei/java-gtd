@@ -22,8 +22,9 @@ public class MarkdownifyService {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final String promptTemplate;
+    private final String userContext;
 
-    public MarkdownifyService(ChatClient.Builder builder, ObjectMapper objectMapper) {
+    public MarkdownifyService(ChatClient.Builder builder, ObjectMapper objectMapper, VaultService vault) {
         this.chatClient = builder.build();
         this.objectMapper = objectMapper;
         try {
@@ -32,14 +33,20 @@ public class MarkdownifyService {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+        String ctx = vault.readContextFile("_context/user-profile.md");
+        this.userContext = ctx.isBlank() ? "(sin perfil de usuario cargado)" : ctx;
     }
 
     public record EnrichResult(String body, List<String> tags) {}
 
-    public EnrichResult enrich(String title, String body) {
+    public EnrichResult enrich(String title, String body, String bucket, List<String> tags) {
+        String tagsStr = (tags == null || tags.isEmpty()) ? "" : String.join(", ", tags);
         String prompt = promptTemplate
-            .replace("{title}", title != null ? title : "")
-            .replace("{body}", body != null ? body : "");
+            .replace("{title}",        title  != null ? title  : "")
+            .replace("{body}",         body   != null ? body   : "")
+            .replace("{bucket}",       bucket != null ? bucket : "backlog")
+            .replace("{tags}",         tagsStr)
+            .replace("{user_context}", userContext);
 
         log.debug("markdownify prompt length: {} chars", prompt.length());
 
@@ -49,14 +56,14 @@ public class MarkdownifyService {
             String json = raw.strip();
             if (json.startsWith("```")) {
                 int start = json.indexOf('\n') + 1;
-                int end = json.lastIndexOf("```");
+                int end   = json.lastIndexOf("```");
                 json = json.substring(start, end).strip();
             }
             Map<String, Object> result = objectMapper.readValue(json, new TypeReference<>() {});
             String newBody = (String) result.getOrDefault("body", body);
             @SuppressWarnings("unchecked")
-            List<String> tags = (List<String>) result.getOrDefault("tags", List.of("gtd"));
-            return new EnrichResult(newBody, tags);
+            List<String> newTags = (List<String>) result.getOrDefault("tags", List.of("gtd"));
+            return new EnrichResult(newBody, newTags);
         } catch (Exception e) {
             log.error("markdownify: failed to parse LLM response: {}", e.getMessage());
             return new EnrichResult(body, List.of("gtd"));

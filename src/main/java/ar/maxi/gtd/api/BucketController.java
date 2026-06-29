@@ -91,9 +91,12 @@ public class BucketController {
     public ResponseEntity<Map<String, Object>> markdownify(@PathVariable String filename) {
         try {
             Map<String, Object> item = vault.read(filename);
-            String title = (String) item.getOrDefault("title", "");
-            String body  = (String) item.getOrDefault("body", "");
-            MarkdownifyService.EnrichResult result = markdownify.enrich(title, body);
+            String title  = (String) item.getOrDefault("title", "");
+            String body   = (String) item.getOrDefault("body", "");
+            String bucket = (String) item.getOrDefault("bucket", "backlog");
+            @SuppressWarnings("unchecked")
+            List<String> tags = (List<String>) item.getOrDefault("tags", List.of());
+            MarkdownifyService.EnrichResult result = markdownify.enrich(title, body, bucket, tags);
             vault.replaceBody(filename, result.body());
             vault.patchMeta(filename, Map.of("tags", result.tags(), "markdownified", true));
             return ResponseEntity.ok(Map.of(

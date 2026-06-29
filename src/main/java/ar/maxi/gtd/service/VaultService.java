@@ -147,7 +147,7 @@ public class VaultService {
     }
 
     public void patchMeta(String filename, Map<String, Object> meta) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a");
         mutate(filename, item -> meta.forEach((k, v) -> {
             if (allowed.contains(k) && v != null) item.put(k, v);
         }));

@@ -4,6 +4,30 @@ This file grows with the project. If you're an agent working on this repo, read 
 
 ---
 
+## Deploy — Railway (PRÓXIMO PASO)
+
+**Objetivo:** reemplazar el mock de GitHub Pages con el backend Java real en Railway, para que el demo en `https://mmilei.github.io/gtd-frontend` use clasificación LLM real.
+
+### Parte 1 — cambios en este repo (un PR)
+
+- **`src/main/java/ar/maxi/gtd/config/CorsConfig.java`** — agregar `WebMvcConfigurer` que permita CORS desde `https://mmilei.github.io` en `/api/**`
+- **`demo-vault/`** — carpeta en la raíz con 3–4 items `.md` pre-seeded (frontmatter completo: `status: open`, `bucket`, `tags`). El demo arranca con contenido visible.
+- **`Dockerfile`** — multi-stage Maven + JDK 21 alpine. Copia `demo-vault/` a `/app/vault`. El vault se resetea en cada redeploy (aceptable para demo).
+
+### Parte 2 — Railway setup (manual)
+
+1. railway.app → nuevo proyecto → conectar repo `mmilei/java-gtd`
+2. Railway detecta el Dockerfile automáticamente
+3. Env vars: `GROQ_API_KEY=gsk_...` y `GTD_VAULT_PATH=/app/vault`
+4. Deploy → copiar URL pública
+
+### Parte 3 — cambios en gtd-frontend (PR separado, DESPUÉS de tener la URL)
+
+- `src/api.js` línea 1: `const BASE = (import.meta.env.VITE_API_BASE_URL ?? '') + '/api'`
+- `.env.production`: reemplazar `VITE_MOCK=true` por `VITE_API_BASE_URL=https://<railway-url>`
+
+---
+
 ## Backend — this repo
 
 ### Ideas / Future
