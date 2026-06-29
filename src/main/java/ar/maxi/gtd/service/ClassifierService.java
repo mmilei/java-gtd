@@ -25,10 +25,11 @@ public class ClassifierService {
     private final ObjectMapper objectMapper;
     private final String promptTemplate;
     private final String fallbackTemplate;
+    private final String userContext;
 
     private static final Set<String> NON_FILING_BUCKETS = Set.of("now", "discard");
 
-    public ClassifierService(ChatClient.Builder builder, ObjectMapper objectMapper) {
+    public ClassifierService(ChatClient.Builder builder, ObjectMapper objectMapper, VaultService vault) {
         this.chatClient = builder.build();
         this.objectMapper = objectMapper;
         try {
@@ -39,6 +40,9 @@ public class ClassifierService {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+        String ctx = vault.readContextFile("_context/user-profile.md");
+        this.userContext = ctx.isBlank() ? "(sin perfil de usuario cargado)" : ctx;
+        log.info("user-profile loaded: {} chars", this.userContext.length());
     }
 
     /**
@@ -92,6 +96,7 @@ public class ClassifierService {
     private String buildPrompt(String template, String today, String openTasksJson, String message) {
         return template
             .replace("{today}", today)
+            .replace("{user_context}", userContext)
             .replace("{open_tasks}", openTasksJson)
             .replace("{message}", message);
     }
