@@ -160,6 +160,17 @@ public class VaultService {
         return item;
     }
 
+    public String readContextFile(String relativePath) {
+        Path file = Path.of(vaultPath, relativePath);
+        if (!Files.exists(file)) return "";
+        try {
+            return Files.readString(file);
+        } catch (IOException e) {
+            log.warn("No se pudo leer {}: {}", relativePath, e.getMessage());
+            return "";
+        }
+    }
+
     public Map<String, Object> stats() {
         Map<String, Integer> counts = new LinkedHashMap<>();
         int total = 0;
