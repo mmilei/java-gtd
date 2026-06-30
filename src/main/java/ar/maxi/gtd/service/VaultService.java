@@ -156,7 +156,7 @@ public class VaultService {
     public Map<String, Object> read(String filename) {
         Path file = resolveFile(filename);
         Map<String, Object> item = readFile(file);
-        if (item == null) throw new IllegalArgumentException("Archivo no encontrado: " + filename);
+        if (item == null) throw new IllegalArgumentException("File not found:" + filename);
         return item;
     }
 
@@ -375,7 +375,7 @@ public class VaultService {
             Path p = dir.resolve(filename);
             if (Files.exists(p)) return p;
         }
-        throw new IllegalArgumentException("Archivo no encontrado: " + filename);
+        throw new IllegalArgumentException("File not found:" + filename);
     }
 
     private Map<String, Object> readFile(Path file) {

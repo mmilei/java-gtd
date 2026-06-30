@@ -98,7 +98,7 @@ public class ChatController {
     private Map<String, Object> handleDone(Map<String, Object> op) {
         String targetFile = (String) op.get("target_file");
         if (targetFile == null) {
-            return Map.of("op", "done", "filed", false, "error", "no match encontrado");
+            return Map.of("op", "done", "filed", false, "error", "no match found");
         }
         vault.markDone(targetFile);
         return Map.of("op", "done", "filed", true, "file", targetFile);
@@ -125,7 +125,7 @@ public class ChatController {
     private Map<String, Object> handleDismissOp(Map<String, Object> op) {
         String targetFile = (String) op.get("target_file");
         if (targetFile == null) {
-            return Map.of("op", "dismiss", "filed", false, "error", "no match encontrado");
+            return Map.of("op", "dismiss", "filed", false, "error", "no match found");
         }
         vault.dismissItem(targetFile);
         return Map.of("op", "dismiss", "filed", true, "file", targetFile);
@@ -134,7 +134,7 @@ public class ChatController {
     private Map<String, Object> handleMove(Map<String, Object> op) {
         String targetFile = (String) op.get("target_file");
         if (targetFile == null) {
-            return Map.of("op", "move", "filed", false, "error", "no match encontrado");
+            return Map.of("op", "move", "filed", false, "error", "no match found");
         }
         String newBucket = (String) op.get("new_bucket");
         String due = (String) op.get("due");
@@ -145,7 +145,7 @@ public class ChatController {
     private Map<String, Object> handlePatch(Map<String, Object> op) {
         String targetFile = (String) op.get("target_file");
         if (targetFile == null) {
-            return Map.of("op", "patch", "filed", false, "error", "no match encontrado");
+            return Map.of("op", "patch", "filed", false, "error", "no match found");
         }
         Map<String, Object> meta = new java.util.HashMap<>();
         if (op.containsKey("tags"))        meta.put("tags", op.get("tags"));
@@ -158,7 +158,7 @@ public class ChatController {
     private Map<String, Object> handleUpdate(Map<String, Object> op) {
         String targetFile = (String) op.get("target_file");
         if (targetFile == null) {
-            return Map.of("op", "update", "filed", false, "error", "no match encontrado");
+            return Map.of("op", "update", "filed", false, "error", "no match found");
         }
         String append = (String) op.getOrDefault("append", "");
         vault.appendToTask(targetFile, append);
