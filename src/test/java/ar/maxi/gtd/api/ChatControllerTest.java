@@ -98,6 +98,46 @@ class ChatControllerTest {
     }
 
     @Test
+    void chatEditRequiresConfirmation() throws Exception {
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "edit", "target_file", "20260625-120000-test.md", "new_body", "Updated content")
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+        when(vault.read("20260625-120000-test.md")).thenReturn(
+                Map.of("title", "Test task", "body", "Original content", "bucket", "backlog")
+        );
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"edit the test task\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ops[0].op").value("edit"))
+                .andExpect(jsonPath("$.ops[0].filed").value(false))
+                .andExpect(jsonPath("$.ops[0].requires_confirmation").value(true))
+                .andExpect(jsonPath("$.ops[0].current_body").value("Original content"))
+                .andExpect(jsonPath("$.ops[0].proposed_body").value("Updated content"));
+        verify(vault, never()).replaceBody(any(), any());
+        verify(vault).read("20260625-120000-test.md");
+    }
+
+    @Test
+    void chatEditNoMatchReturnsError() throws Exception {
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "edit")
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"edit something\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ops[0].op").value("edit"))
+                .andExpect(jsonPath("$.ops[0].filed").value(false))
+                .andExpect(jsonPath("$.ops[0].error").exists());
+        verify(vault, never()).replaceBody(any(), any());
+    }
+
+    @Test
     void chatNowNotFiled() throws Exception {
         List<Map<String, Object>> ops = List.of(
                 Map.of("op", "create", "bucket", "now", "title", "Responder email",

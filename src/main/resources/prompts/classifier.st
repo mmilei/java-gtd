@@ -26,9 +26,10 @@ Is it a concrete action someone can do?
    Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or name), tags [], message (only for now/discard)
    Tags: always ["gtd"] + at least 1 context tag inferred from the title:
      purchase/grocery/hardware store → "compras" | doctor/health/medicine/appointment/gym → "salud"
-     call/whatsapp/message → "llamadas" | work/code/PR/meeting/deploy → "trabajo"
+     call/whatsapp/message → "llamadas" | work/meeting → "trabajo"
      pay/invoice/bank/tax → "finanzas" | home/bathroom/kitchen/apartment → "hogar"
      learn/book/course/read → "aprendizaje" | cat/pet → "mascotas"
+     code/PR/endpoint/test/deploy/bug/feature/API/backend/frontend/refactor/fix/build → "trabajo" + "proyecto"
 
 2. "done" — complete or cancel an existing task
    Fields: op, target_file (exact filename from the open tasks list that best matches; null if no clear match)
@@ -62,6 +63,12 @@ Is it a concrete action someone can do?
 - "due" only in YYYY-MM-DD if a concrete date is mentioned, otherwise null
 - Always return a JSON array, even if it has a single element or is empty: []
 - Respond ONLY with JSON, no markdown wrapper or explanation
+
+## Edit intent disambiguation
+"edit", "done", "move", "dismiss", and "patch" ONLY apply when the user is clearly referring to an EXISTING TASK by its title.
+- If the user says "change/modify/update/fix X in Y" where Y is a technical artifact (code file, system, config, API, component) and NOT a task title in the open tasks list → use "create" instead.
+- Set target_file ONLY if you are >90% confident the user refers to an existing task. When in doubt → null, and use "create".
+- Never guess on destructive operations (edit, dismiss). A false positive on "create" is harmless; a false positive on "edit" overwrites data.
 
 ## Examples
 - "buy bread" → [{"op":"create","bucket":"backlog","title":"Buy bread","body":"","due":null,"delegado_a":null,"tags":["gtd","action","compras"]}]

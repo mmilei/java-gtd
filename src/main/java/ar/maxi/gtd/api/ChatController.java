@@ -107,11 +107,19 @@ public class ChatController {
     private Map<String, Object> handleEdit(Map<String, Object> op) {
         String targetFile = (String) op.get("target_file");
         if (targetFile == null) {
-            return Map.of("op", "edit", "filed", false, "error", "no match encontrado");
+            return Map.of("op", "edit", "filed", false, "error", "no match found");
         }
-        String newBody = (String) op.getOrDefault("new_body", "");
-        vault.replaceBody(targetFile, newBody);
-        return Map.of("op", "edit", "filed", true, "file", targetFile);
+        String proposedBody = (String) op.getOrDefault("new_body", "");
+        Map<String, Object> current = vault.read(targetFile);
+        return Map.of(
+            "op", "edit",
+            "filed", false,
+            "requires_confirmation", true,
+            "target_file", targetFile,
+            "title", current.getOrDefault("title", targetFile),
+            "current_body", current.getOrDefault("body", ""),
+            "proposed_body", proposedBody
+        );
     }
 
     private Map<String, Object> handleDismissOp(Map<String, Object> op) {
