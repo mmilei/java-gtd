@@ -161,8 +161,18 @@ public class ChatController {
             return Map.of("op", "update", "filed", false, "error", "no match found");
         }
         String append = (String) op.getOrDefault("append", "");
-        vault.appendToTask(targetFile, append);
-        return Map.of("op", "update", "filed", true, "file", targetFile, "appended", append);
+        Map<String, Object> current = vault.read(targetFile);
+        String currentBody = (String) current.getOrDefault("body", "");
+        String proposedBody = currentBody.isBlank() ? append : currentBody + "\n" + append;
+        return Map.of(
+            "op", "update",
+            "filed", false,
+            "requires_confirmation", true,
+            "target_file", targetFile,
+            "title", current.getOrDefault("title", targetFile),
+            "current_body", currentBody,
+            "proposed_body", proposedBody
+        );
     }
 
     record ChatResponse(boolean fallback, List<Map<String, Object>> ops) {}

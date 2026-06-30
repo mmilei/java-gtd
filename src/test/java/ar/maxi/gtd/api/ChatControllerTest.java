@@ -138,6 +138,29 @@ class ChatControllerTest {
     }
 
     @Test
+    void chatUpdateRequiresConfirmation() throws Exception {
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "update", "target_file", "20260625-120000-test.md", "append", "New line")
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+        when(vault.read("20260625-120000-test.md")).thenReturn(
+                Map.of("title", "Test task", "body", "Existing content", "bucket", "backlog")
+        );
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"add to the test task: New line\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ops[0].op").value("update"))
+                .andExpect(jsonPath("$.ops[0].filed").value(false))
+                .andExpect(jsonPath("$.ops[0].requires_confirmation").value(true))
+                .andExpect(jsonPath("$.ops[0].current_body").value("Existing content"))
+                .andExpect(jsonPath("$.ops[0].proposed_body").value("Existing content\nNew line"));
+        verify(vault, never()).appendToTask(any(), any());
+        verify(vault).read("20260625-120000-test.md");
+    }
+
+    @Test
     void chatNowNotFiled() throws Exception {
         List<Map<String, Object>> ops = List.of(
                 Map.of("op", "create", "bucket", "now", "title", "Reply to email",
