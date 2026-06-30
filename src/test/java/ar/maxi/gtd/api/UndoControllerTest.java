@@ -31,14 +31,14 @@ class UndoControllerTest {
         mvc.perform(post("/api/undo"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.undone").value(false))
-                .andExpect(jsonPath("$.reason").value("stack vacío"));
+                .andExpect(jsonPath("$.reason").value("empty stack"));
     }
 
     @Test
     void undoRestoresFile(@TempDir Path tempDir) throws Exception {
         Path file = tempDir.resolve("20260625-120000-test.md");
         String previousContent = "---\ntitle: Test\n---\n";
-        Files.writeString(file, "contenido actual");
+        Files.writeString(file, "current content");
 
         when(undoStack.pop()).thenReturn(Optional.of(
                 new UndoEntry("20260625-120000-test.md", file, previousContent)

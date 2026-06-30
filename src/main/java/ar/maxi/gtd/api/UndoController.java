@@ -24,7 +24,7 @@ public class UndoController {
     public ResponseEntity<Map<String, Object>> undo() {
         Optional<UndoEntry> entry = undoStack.pop();
         if (entry.isEmpty()) {
-            return ResponseEntity.ok(Map.of("undone", false, "reason", "stack vacío"));
+            return ResponseEntity.ok(Map.of("undone", false, "reason", "empty stack"));
         }
         UndoEntry e = entry.get();
         try {

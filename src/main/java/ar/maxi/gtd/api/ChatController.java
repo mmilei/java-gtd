@@ -66,7 +66,7 @@ public class ChatController {
                 case "edit"   -> handleEdit(op);
                 case "patch"  -> handlePatch(op);
                 case "dismiss" -> handleDismissOp(op);
-                default       -> Map.of("op", opType, "filed", false, "error", "op desconocido: " + opType);
+                default       -> Map.of("op", opType, "filed", false, "error", "unknown op: " + opType);
             };
         } catch (Exception e) {
             return Map.of("op", opType != null ? opType : "unknown", "filed", false, "error", e.getMessage());
