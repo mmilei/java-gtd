@@ -156,7 +156,7 @@ public class VaultService {
     public Map<String, Object> read(String filename) {
         Path file = resolveFile(filename);
         Map<String, Object> item = readFile(file);
-        if (item == null) throw new IllegalArgumentException("Archivo no encontrado: " + filename);
+        if (item == null) throw new IllegalArgumentException("File not found:" + filename);
         return item;
     }
 
@@ -166,7 +166,7 @@ public class VaultService {
         try {
             return Files.readString(file);
         } catch (IOException e) {
-            log.warn("No se pudo leer {}: {}", relativePath, e.getMessage());
+            log.warn("Could not read {}: {}", relativePath, e.getMessage());
             return "";
         }
     }
@@ -229,7 +229,7 @@ public class VaultService {
                          catch (Exception e) { return false; }
                      })
                      .forEach(all::add);
-            } catch (IOException e) { /* directorio vacío, ignorar */ }
+            } catch (IOException e) { /* empty directory, skip */ }
         }
         all.sort(Comparator.comparing(
             m -> String.valueOf(m.getOrDefault("updated", "")),
@@ -247,7 +247,7 @@ public class VaultService {
                      .filter(Objects::nonNull)
                      .filter(m -> INACTIVE_STATUSES.contains(String.valueOf(m.getOrDefault("status", ""))))
                      .forEach(all::add);
-            } catch (IOException e) { /* directorio vacío, ignorar */ }
+            } catch (IOException e) { /* empty directory, skip */ }
         }
         all.sort(Comparator.comparing(
             m -> String.valueOf(m.getOrDefault("updated", m.getOrDefault("created", ""))),
@@ -369,13 +369,13 @@ public class VaultService {
 
     private Path resolveFile(String filename) {
         if (!filename.matches("[\\w.\\-]+\\.md")) {
-            throw new IllegalArgumentException("Filename inválido: " + filename);
+            throw new IllegalArgumentException("Invalid filename: " + filename);
         }
         for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
             Path p = dir.resolve(filename);
             if (Files.exists(p)) return p;
         }
-        throw new IllegalArgumentException("Archivo no encontrado: " + filename);
+        throw new IllegalArgumentException("File not found:" + filename);
     }
 
     private Map<String, Object> readFile(Path file) {

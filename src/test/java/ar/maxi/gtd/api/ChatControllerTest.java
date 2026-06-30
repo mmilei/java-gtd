@@ -34,15 +34,15 @@ class ChatControllerTest {
     @Test
     void chatCreate() throws Exception {
         List<Map<String, Object>> ops = List.of(
-                Map.of("op", "create", "bucket", "today", "title", "Llamar al médico",
+                Map.of("op", "create", "bucket", "today", "title", "Call the doctor",
                         "body", "", "due", "", "delegado_a", "", "tags", List.of())
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
-        when(vault.write(any())).thenReturn("20260625-120000-llamar-al-medico.md");
+        when(vault.write(any())).thenReturn("20260625-120000-call-the-doctor.md");
 
         mvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"message\":\"llamar al médico mañana\"}"))
+                        .content("{\"message\":\"call the doctor today\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.fallback").value(false))
                 .andExpect(jsonPath("$.ops[0].op").value("create"))
@@ -68,15 +68,15 @@ class ChatControllerTest {
     @Test
     void chatWithFallback() throws Exception {
         List<Map<String, Object>> ops = List.of(
-                Map.of("op", "create", "bucket", "someday", "title", "Aprender piano",
+                Map.of("op", "create", "bucket", "someday", "title", "Learn piano",
                         "body", "", "due", "", "delegado_a", "", "tags", List.of())
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, true));
-        when(vault.write(any())).thenReturn("20260625-120000-aprender-piano.md");
+        when(vault.write(any())).thenReturn("20260625-120000-learn-piano.md");
 
         mvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"message\":\"algún día aprender piano\"}"))
+                        .content("{\"message\":\"someday learn piano\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.fallback").value(true));
     }
@@ -90,7 +90,7 @@ class ChatControllerTest {
 
         mvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"message\":\"ya hice la tarea\"}"))
+                        .content("{\"message\":\"done with the task\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ops[0].op").value("done"))
                 .andExpect(jsonPath("$.ops[0].filed").value(true));
@@ -98,16 +98,79 @@ class ChatControllerTest {
     }
 
     @Test
-    void chatNowNotFiled() throws Exception {
+    void chatEditRequiresConfirmation() throws Exception {
         List<Map<String, Object>> ops = List.of(
-                Map.of("op", "create", "bucket", "now", "title", "Responder email",
-                        "message", "Hacelo ya", "body", "", "due", "", "delegado_a", "", "tags", List.of())
+                Map.of("op", "edit", "target_file", "20260625-120000-test.md", "new_body", "Updated content")
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+        when(vault.read("20260625-120000-test.md")).thenReturn(
+                Map.of("title", "Test task", "body", "Original content", "bucket", "backlog")
+        );
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"edit the test task\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ops[0].op").value("edit"))
+                .andExpect(jsonPath("$.ops[0].filed").value(false))
+                .andExpect(jsonPath("$.ops[0].requires_confirmation").value(true))
+                .andExpect(jsonPath("$.ops[0].current_body").value("Original content"))
+                .andExpect(jsonPath("$.ops[0].proposed_body").value("Updated content"));
+        verify(vault, never()).replaceBody(any(), any());
+        verify(vault).read("20260625-120000-test.md");
+    }
+
+    @Test
+    void chatEditNoMatchReturnsError() throws Exception {
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "edit")
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
 
         mvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"message\":\"respondé ese email\"}"))
+                        .content("{\"message\":\"edit something\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ops[0].op").value("edit"))
+                .andExpect(jsonPath("$.ops[0].filed").value(false))
+                .andExpect(jsonPath("$.ops[0].error").exists());
+        verify(vault, never()).replaceBody(any(), any());
+    }
+
+    @Test
+    void chatUpdateRequiresConfirmation() throws Exception {
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "update", "target_file", "20260625-120000-test.md", "append", "New line")
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+        when(vault.read("20260625-120000-test.md")).thenReturn(
+                Map.of("title", "Test task", "body", "Existing content", "bucket", "backlog")
+        );
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"add to the test task: New line\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ops[0].op").value("update"))
+                .andExpect(jsonPath("$.ops[0].filed").value(false))
+                .andExpect(jsonPath("$.ops[0].requires_confirmation").value(true))
+                .andExpect(jsonPath("$.ops[0].current_body").value("Existing content"))
+                .andExpect(jsonPath("$.ops[0].proposed_body").value("Existing content\nNew line"));
+        verify(vault, never()).appendToTask(any(), any());
+        verify(vault).read("20260625-120000-test.md");
+    }
+
+    @Test
+    void chatNowNotFiled() throws Exception {
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "create", "bucket", "now", "title", "Reply to email",
+                        "message", "Do it now", "body", "", "due", "", "delegado_a", "", "tags", List.of())
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"reply to that email now\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ops[0].filed").value(false))
                 .andExpect(jsonPath("$.ops[0].bucket").value("now"));

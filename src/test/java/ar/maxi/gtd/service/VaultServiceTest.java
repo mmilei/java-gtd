@@ -27,7 +27,7 @@ class VaultServiceTest {
         VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
         assertThatThrownBy(() -> vault.read("../../../etc/passwd"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Filename inválido");
+                .hasMessageContaining("Invalid filename");
     }
 
     @Test
@@ -35,7 +35,7 @@ class VaultServiceTest {
         VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
         assertThatThrownBy(() -> vault.read("noextension"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Filename inválido");
+                .hasMessageContaining("Invalid filename");
     }
 
     @Test
@@ -54,15 +54,15 @@ class VaultServiceTest {
         VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "today");
-        op.put("title", "Hacer algo");
-        op.put("tags", new java.util.ArrayList<>(List.of("trabajo")));
+        op.put("title", "Do something");
+        op.put("tags", new java.util.ArrayList<>(List.of("work")));
 
         String filename = vault.write(op);
         Map<String, Object> saved = vault.read(filename);
 
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) saved.get("tags");
-        assertThat(tags).contains("gtd", "action", "trabajo");
+        assertThat(tags).contains("gtd", "action", "work");
         assertThat(tags).doesNotContain("reference");
     }
 
@@ -71,15 +71,15 @@ class VaultServiceTest {
         VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "reference");
-        op.put("title", "Documentación útil");
-        op.put("tags", new java.util.ArrayList<>(List.of("gtd", "action", "trabajo")));
+        op.put("title", "Useful documentation");
+        op.put("tags", new java.util.ArrayList<>(List.of("gtd", "action", "work")));
 
         String filename = vault.write(op);
         Map<String, Object> saved = vault.read(filename);
 
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) saved.get("tags");
-        assertThat(tags).contains("gtd", "reference", "trabajo");
+        assertThat(tags).contains("gtd", "reference", "work");
         assertThat(tags).doesNotContain("action");
     }
 
@@ -88,7 +88,7 @@ class VaultServiceTest {
         VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
-        op.put("title", "Tarea sin tags");
+        op.put("title", "Task with no tags");
         op.put("tags", null);
 
         String filename = vault.write(op);
@@ -104,8 +104,8 @@ class VaultServiceTest {
         VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
-        op.put("title", "Mover a referencia");
-        op.put("tags", new java.util.ArrayList<>(List.of("trabajo")));
+        op.put("title", "Move to reference");
+        op.put("tags", new java.util.ArrayList<>(List.of("work")));
         String filename = vault.write(op);
 
         vault.moveBucket(filename, "reference", null);

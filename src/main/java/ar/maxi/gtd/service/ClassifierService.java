@@ -41,13 +41,13 @@ public class ClassifierService {
             throw new UncheckedIOException(e);
         }
         String ctx = vault.readContextFile("_context/user-profile.md");
-        this.userContext = ctx.isBlank() ? "(sin perfil de usuario cargado)" : ctx;
+        this.userContext = ctx.isBlank() ? "(no user profile loaded)" : ctx;
         log.info("user-profile loaded: {} chars", this.userContext.length());
     }
 
     /**
-     * Clasifica el mensaje con retry automático:
-     * Nivel 1 → prompt liviano. Si falla el parse o todos los ops son now/discard → Nivel 2.
+     * Classifies the message with automatic retry:
+     * Level 1 → lightweight prompt. If parsing fails or all ops are now/discard → Level 2.
      */
     public ClassifyResult classifyAll(String message, List<Map<String, Object>> openTasks) {
         String openTasksJson = serializeTasks(openTasks);
@@ -56,23 +56,23 @@ public class ClassifierService {
         List<Map<String, Object>> ops = null;
         boolean usedFallback = false;
 
-        // Nivel 1
+        // Level 1
         String level1 = buildPrompt(promptTemplate, today, openTasksJson, message);
         String response1 = call(level1);
         try {
             ops = parseJsonList(response1);
         } catch (Exception ignored) {
-            // parse falló → ir al fallback
+            // parse failed → try fallback
         }
 
         if (ops == null || allNonFiling(ops)) {
-            // Nivel 2
+            // Level 2
             String level2 = buildPrompt(fallbackTemplate, today, openTasksJson, message);
             String response2 = call(level2);
             try {
                 ops = parseJsonList(response2);
             } catch (Exception e) {
-                log.error("Fallback también falló al parsear JSON: {}", e.getMessage());
+                log.error("Fallback also failed to parse JSON: {}", e.getMessage());
                 ops = List.of();
             }
             usedFallback = true;
@@ -85,7 +85,7 @@ public class ClassifierService {
         if (ops.isEmpty()) return true;
         return ops.stream().allMatch(op -> {
             String opType = (String) op.get("op");
-            // done/update son siempre útiles — no triggean el fallback
+            // done/update/move/edit/dismiss are always actionable — do not trigger fallback
             if ("done".equals(opType) || "update".equals(opType) || "move".equals(opType)
                     || "edit".equals(opType) || "dismiss".equals(opType)) return false;
             String bucket = (String) op.get("bucket");
@@ -110,7 +110,7 @@ public class ClassifierService {
             if (openTasks.isEmpty()) return "[]";
             String full = objectMapper.writeValueAsString(openTasks);
             if (full.length() <= 6000) return full;
-            // Vault demasiado grande: truncar para no explotar el rate limit de Groq
+            // Vault too large: truncate to stay within Groq rate limits
             List<Map<String, Object>> trimmed = openTasks.subList(0, Math.min(80, openTasks.size()));
             log.warn("open_tasks truncated to {} items (original {} chars)", trimmed.size(), full.length());
             return objectMapper.writeValueAsString(trimmed);
@@ -129,7 +129,7 @@ public class ClassifierService {
             }
             return objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
         } catch (Exception e) {
-            throw new RuntimeException("El LLM devolvió JSON inválido: " + raw, e);
+            throw new RuntimeException("LLM returned invalid JSON: " + raw, e);
         }
     }
 

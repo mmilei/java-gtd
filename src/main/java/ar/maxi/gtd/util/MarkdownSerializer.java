@@ -35,7 +35,7 @@ public final class MarkdownSerializer {
         try {
             map = yaml.load(yamlPart);
         } catch (YAMLException e) {
-            log.warn("YAML malformado en archivo, usando frontmatter vacío: {}", e.getMessage());
+            log.warn("Malformed YAML in file, using empty frontmatter: {}", e.getMessage());
             map = null;
         }
         if (map == null) map = new LinkedHashMap<>();
