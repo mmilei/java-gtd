@@ -7,8 +7,8 @@ en buckets GTD y escribe notas Markdown a un vault Obsidian.
 
 ## Leer siempre primero
 
-- **`TODO.md`** — pendientes del proyecto. Leelo al arrancar, actualizalo al terminar.
 - **`README.md`** — endpoints completos y ejemplos de uso.
+- Pendientes del proyecto: `brain/inbox/` y `brain/someday/` en el vault Obsidian (tag `java-gtd`).
 
 ## Reglas de trabajo
 
