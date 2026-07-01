@@ -185,6 +185,48 @@ class VaultServiceTest {
     }
 
     @Test
+    void shouldNotTouchNonGtdNotesWithoutBucketField(@TempDir Path tempDir) throws Exception {
+        Path inbox   = tempDir.resolve("brain/inbox");
+        Path someday = tempDir.resolve("brain/someday");
+        Files.createDirectories(inbox);
+        Files.createDirectories(someday);
+
+        // Per-directory meta index — same filename in both dirs by design, not a duplicate task.
+        Files.writeString(inbox.resolve("_index.md"), """
+            ---
+            type: meta
+            title: "Brain / Inbox"
+            status: active
+            ---
+
+            """);
+        Files.writeString(someday.resolve("_index.md"), """
+            ---
+            type: meta
+            title: "Brain / Someday"
+            status: active
+            ---
+
+            """);
+
+        // Freeform idea/someday-maybe note with its own schema (status, not bucket).
+        Files.writeString(someday.resolve("some-idea.md"), """
+            ---
+            type: idea
+            status: someday
+            ---
+
+            """);
+
+        new VaultService(tempDir.toString(), new UndoStack());
+
+        assertThat(inbox.resolve("_index.md")).exists();
+        assertThat(someday.resolve("_index.md")).exists();
+        assertThat(someday.resolve("some-idea.md")).exists();
+        assertThat(inbox.resolve("some-idea.md")).doesNotExist();
+    }
+
+    @Test
     void shouldNormalizeTagsOnMoveBucket(@TempDir Path tempDir) throws Exception {
         VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
         Map<String, Object> op = new java.util.LinkedHashMap<>();

@@ -359,12 +359,18 @@ public class VaultService {
      * inboxDir and somedayDir — keep the copy whose bucket matches the directory it's in
      * (tie/mismatch-both broken by most recent "updated"), delete the other. Misplaced-no-duplicate:
      * single copy sitting in a directory that doesn't match its own bucket field — relocate it.
+     *
+     * Only touches files that actually have a "bucket" key — brain/inbox and brain/someday also
+     * hold non-GTD notes (meta index pages, freeform ideas/someday-maybe entries with their own
+     * type/status schema) that were never written by VaultService and must not be moved or
+     * treated as duplicates just because the same filename convention happens to collide.
      */
     private void migrateBucketMismatch() {
         Map<String, List<Path>> byFilename = new LinkedHashMap<>();
         for (Path dir : List.of(inboxDir, somedayDir)) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md"))
+                     .filter(this::hasBucketField)
                      .forEach(p -> byFilename.computeIfAbsent(p.getFileName().toString(), k -> new ArrayList<>()).add(p));
             } catch (IOException e) {
                 log.warn("migrateBucketMismatch: could not list {}: {}", dir, e.getMessage());
@@ -378,6 +384,11 @@ public class VaultService {
                 relocateIfMismatched(paths.get(0));
             }
         }
+    }
+
+    private boolean hasBucketField(Path p) {
+        Map<String, Object> item = readFile(p);
+        return item != null && item.get("bucket") != null;
     }
 
     private void resolveDuplicate(String filename, List<Path> paths) {
