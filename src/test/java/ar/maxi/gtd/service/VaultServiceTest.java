@@ -156,6 +156,102 @@ class VaultServiceTest {
         assertThat(inbox.resolve(filename)).exists();
         assertThat(someday.resolve(filename)).doesNotExist();
         assertThat(vault.read(filename).get("bucket")).isEqualTo("backlog");
+
+        Path quarantined = tempDir.resolve("brain/.archive/duplicates").resolve(filename);
+        assertThat(quarantined).exists();
+        assertThat(Files.readString(quarantined)).contains("status: dismissed");
+    }
+
+    @Test
+    void shouldKeepMostRecentlyUpdatedCopyWhenBothMatchTheirOwnDirectory(@TempDir Path tempDir) throws Exception {
+        Path inbox   = tempDir.resolve("brain/inbox");
+        Path someday = tempDir.resolve("brain/someday");
+        Files.createDirectories(inbox);
+        Files.createDirectories(someday);
+
+        // Both copies are individually self-consistent (bucket matches the dir they sit in) —
+        // the inbox copy is scanned first but is the STALE one; someday has the newer edit.
+        String filename = "20260630-tiebreak-both-consistent.md";
+        Files.writeString(inbox.resolve(filename), """
+            ---
+            type: action
+            title: Tiebreak task
+            bucket: backlog
+            status: open
+            created: 2026-06-30
+            updated: 2026-06-30
+            tags: [gtd, action]
+            ---
+
+            """);
+        Files.writeString(someday.resolve(filename), """
+            ---
+            type: action
+            title: Tiebreak task
+            bucket: someday
+            status: open
+            created: 2026-06-30
+            updated: 2026-07-01
+            tags: [gtd, action]
+            ---
+
+            """);
+
+        new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
+
+        assertThat(someday.resolve(filename)).exists();
+        assertThat(inbox.resolve(filename)).doesNotExist();
+        assertThat(tempDir.resolve("brain/.archive/duplicates").resolve(filename)).exists();
+    }
+
+    @Test
+    void shouldLeaveOriginUntouchedWhenMoveBucketDestinationAlreadyExists(@TempDir Path tempDir) throws Exception {
+        Path inbox   = tempDir.resolve("brain/inbox");
+        Path someday = tempDir.resolve("brain/someday");
+        Files.createDirectories(inbox);
+        Files.createDirectories(someday);
+
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Conflicting move");
+        op.put("tags", new java.util.ArrayList<>(List.of("work")));
+        String filename = vault.write(op);
+        String originalContent = Files.readString(inbox.resolve(filename));
+
+        // Pre-create a conflicting file at the move destination to force Files.move to throw.
+        Files.writeString(someday.resolve(filename), "conflicting content");
+
+        assertThatThrownBy(() -> vault.moveBucket(filename, "someday", null))
+            .isInstanceOf(java.io.UncheckedIOException.class);
+
+        assertThat(Files.readString(inbox.resolve(filename))).isEqualTo(originalContent);
+    }
+
+    @Test
+    void shouldRelocateReferenceBucketFileToResourcesDir(@TempDir Path tempDir) throws Exception {
+        Path inbox = tempDir.resolve("brain/inbox");
+        Files.createDirectories(inbox);
+
+        String filename = "20260701-000000-misplaced-reference-task.md";
+        Files.writeString(inbox.resolve(filename), """
+            ---
+            type: reference
+            title: Misplaced reference note
+            bucket: reference
+            status: open
+            created: 2026-07-01
+            updated: 2026-07-01
+            tags: [gtd, reference]
+            ---
+
+            """);
+
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
+
+        assertThat(inbox.resolve(filename)).doesNotExist();
+        assertThat(tempDir.resolve("brain/resources").resolve(filename)).exists();
+        assertThat(vault.read(filename).get("bucket")).isEqualTo("reference");
     }
 
     @Test
