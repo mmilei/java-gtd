@@ -47,6 +47,7 @@ public class VaultService {
             log.error("Could not create vault directories: {}", e.getMessage());
         }
         migrateTodaySince();
+        migrateTimestamps();
     }
 
     public String write(Map<String, Object> item) {
@@ -262,7 +263,7 @@ public class VaultService {
             String previousContent = Files.readString(file);
             undoStack.push(new UndoStack.UndoEntry(filename, file, previousContent));
 
-            Map<String, Object> item = MarkdownSerializer.parse(previousContent);
+            Map<String, Object> item = MarkdownSerializer.parse(previousContent, filename);
             String body = (String) item.remove("body");
             item.put("bucket", newBucket);
             if (due != null && !due.isBlank()) item.put("due", due);
@@ -327,7 +328,7 @@ public class VaultService {
                 files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
                     try {
                         String content = Files.readString(p);
-                        Map<String, Object> item = MarkdownSerializer.parse(content);
+                        Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
                         if ("today".equals(item.get("bucket")) && item.get("today_since") == null) {
                             String created = (String) item.get("created");
                             if (created != null) {
@@ -352,7 +353,7 @@ public class VaultService {
             String previousContent = Files.readString(file);
             undoStack.push(new UndoStack.UndoEntry(filename, file, previousContent));
 
-            Map<String, Object> item = MarkdownSerializer.parse(previousContent);
+            Map<String, Object> item = MarkdownSerializer.parse(previousContent, filename);
             String body = (String) item.remove("body");
             modifier.accept(item);
 
@@ -380,7 +381,7 @@ public class VaultService {
 
     private Map<String, Object> readFile(Path file) {
         try {
-            Map<String, Object> map = MarkdownSerializer.parse(Files.readString(file));
+            Map<String, Object> map = MarkdownSerializer.parse(Files.readString(file), file.getFileName().toString());
             map.put("file", file.getFileName().toString());
             return map;
         } catch (IOException e) {
@@ -403,6 +404,31 @@ public class VaultService {
         } else {
             tags.remove("reference");
             if (!tags.contains("action")) tags.add("action");
+        }
+    }
+
+    private void migrateTimestamps() {
+        java.util.regex.Pattern TS_IN_YAML = java.util.regex.Pattern.compile("\\d{4}-\\d{2}-\\d{2}T");
+        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
+                    try {
+                        String content = Files.readString(p);
+                        int fmEnd = content.indexOf("\n---", content.indexOf('\n') + 1);
+                        String frontmatter = fmEnd > 0 ? content.substring(0, fmEnd) : "";
+                        if (!TS_IN_YAML.matcher(frontmatter).find()) return;
+
+                        Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
+                        String body = (String) item.remove("body");
+                        Files.writeString(p, MarkdownSerializer.serialize(item, body));
+                        log.info("migrateTimestamps: fixed {}", p.getFileName());
+                    } catch (Exception e) {
+                        log.warn("migrateTimestamps: skipping {}: {}", p.getFileName(), e.getMessage());
+                    }
+                });
+            } catch (IOException e) {
+                log.warn("migrateTimestamps: could not list {}: {}", dir, e.getMessage());
+            }
         }
     }
 
