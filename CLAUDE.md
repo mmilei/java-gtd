@@ -47,9 +47,16 @@ src/main/resources/
   application.properties                         ← config base (GROQ_API_KEY, GTD_VAULT_PATH)
   application-local.properties                   ← gitignored, overrides locales
   prompts/
-    classifier.st                                ← prompt liviano (nivel 1)
-    classifier-fallback.st                       ← prompt detallado con ejemplos (nivel 2)
+    classifier.st                                ← prompt nivel 1, inglés — sample público (portfolio)
+    classifier-fallback.st                       ← prompt nivel 2 (retry), inglés — sample público
+    classifier_custom.st                         ← gitignored — versión argentina (voseo), uso personal
+    classifier-fallback-custom.st                ← gitignored — retry en español
 ```
+
+`classifier.template` (`application.properties`, default `sample`) elige el par de prompts.
+`custom` carga `classifier_custom.st`/`classifier-fallback-custom.st` — solo existen local,
+seteado en `application-local.properties` (gitignored). `ClassifierService.templateResourcePath()`
+resuelve el path, sin IO, testeado directo.
 
 Sin cualquiera de estos archivos, la app no compila o no levanta.
 

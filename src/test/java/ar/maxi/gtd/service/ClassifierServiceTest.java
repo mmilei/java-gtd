@@ -92,6 +92,29 @@ class ClassifierServiceTest {
     }
 
     @Test
+    void templateResourcePathUsesCustomWhenModeIsCustom() {
+        assertThat(ClassifierService.templateResourcePath("custom", false))
+                .isEqualTo("prompts/classifier_custom.st");
+        assertThat(ClassifierService.templateResourcePath("custom", true))
+                .isEqualTo("prompts/classifier-fallback-custom.st");
+    }
+
+    @Test
+    void templateResourcePathDefaultsToSampleForSampleModeOrUnknownValue() {
+        assertThat(ClassifierService.templateResourcePath("sample", false))
+                .isEqualTo("prompts/classifier.st");
+        assertThat(ClassifierService.templateResourcePath("sample", true))
+                .isEqualTo("prompts/classifier-fallback.st");
+
+        // unrecognized/null values must never silently fall through to the gitignored
+        // custom templates, which don't exist in CI or a public clone
+        assertThat(ClassifierService.templateResourcePath("something-else", false))
+                .isEqualTo("prompts/classifier.st");
+        assertThat(ClassifierService.templateResourcePath(null, false))
+                .isEqualTo("prompts/classifier.st");
+    }
+
+    @Test
     void legacyTargetFileTrustedOnlyWhenVerifiedPresent() {
         Map<String, Object> validLegacy = new HashMap<>();
         validLegacy.put("op", "done");
