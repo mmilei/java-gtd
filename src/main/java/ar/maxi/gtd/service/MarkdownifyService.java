@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
@@ -24,8 +25,8 @@ public class MarkdownifyService {
     private final String promptTemplate;
     private final String userContext;
 
-    public MarkdownifyService(ChatClient.Builder builder, ObjectMapper objectMapper, VaultService vault) {
-        this.chatClient = builder.build();
+    public MarkdownifyService(@Qualifier("groqChatClient") ChatClient chatClient, ObjectMapper objectMapper, VaultService vault) {
+        this.chatClient = chatClient;
         this.objectMapper = objectMapper;
         try {
             this.promptTemplate = new ClassPathResource("prompts/markdownify.st")

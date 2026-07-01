@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
@@ -21,7 +20,7 @@ public class ClassifierService {
 
     private static final Logger log = LoggerFactory.getLogger(ClassifierService.class);
 
-    private final ChatClient chatClient;
+    private final LlmProviderService llmProviders;
     private final ObjectMapper objectMapper;
     private final String promptTemplate;
     private final String fallbackTemplate;
@@ -29,8 +28,8 @@ public class ClassifierService {
 
     private static final Set<String> NON_FILING_BUCKETS = Set.of("now", "discard");
 
-    public ClassifierService(ChatClient.Builder builder, ObjectMapper objectMapper, VaultService vault) {
-        this.chatClient = builder.build();
+    public ClassifierService(LlmProviderService llmProviders, ObjectMapper objectMapper, VaultService vault) {
+        this.llmProviders = llmProviders;
         this.objectMapper = objectMapper;
         try {
             this.promptTemplate = new ClassPathResource("prompts/classifier.st")
@@ -102,7 +101,7 @@ public class ClassifierService {
     }
 
     private String call(String promptText) {
-        return chatClient.prompt().user(promptText).call().content();
+        return llmProviders.complete(promptText);
     }
 
     private String serializeTasks(List<Map<String, Object>> openTasks) {
