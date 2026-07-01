@@ -33,7 +33,12 @@ public class VaultService {
     private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
 
-    public VaultService(@Value("${gtd.vault.path}") String vaultPath, UndoStack undoStack) {
+    public VaultService(
+            @Value("${gtd.vault.path}") String vaultPath,
+            UndoStack undoStack,
+            @Value("${gtd.vault.migrate-today-since:true}") boolean migrateTodaySinceEnabled,
+            @Value("${gtd.vault.migrate-timestamps:true}") boolean migrateTimestampsEnabled,
+            @Value("${gtd.vault.migrate-bucket-mismatch:true}") boolean migrateBucketMismatchEnabled) {
         this.vaultPath    = vaultPath;
         this.inboxDir     = Path.of(vaultPath, "brain/inbox");
         this.somedayDir   = Path.of(vaultPath, "brain/someday");
@@ -46,9 +51,9 @@ public class VaultService {
         } catch (IOException e) {
             log.error("Could not create vault directories: {}", e.getMessage());
         }
-        migrateTodaySince();
-        migrateTimestamps();
-        migrateBucketMismatch();
+        if (migrateTodaySinceEnabled) migrateTodaySince();
+        if (migrateTimestampsEnabled) migrateTimestamps();
+        if (migrateBucketMismatchEnabled) migrateBucketMismatch();
     }
 
     public String write(Map<String, Object> item) {

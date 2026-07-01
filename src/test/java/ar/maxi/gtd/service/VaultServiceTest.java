@@ -15,7 +15,7 @@ class VaultServiceTest {
 
     @Test
     void shouldCreateVaultDirectoriesOnStartup(@TempDir Path tempDir) {
-        new VaultService(tempDir.toString(), new UndoStack());
+        new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
 
         assertThat(tempDir.resolve("brain/inbox")).isDirectory();
         assertThat(tempDir.resolve("brain/someday")).isDirectory();
@@ -24,7 +24,7 @@ class VaultServiceTest {
 
     @Test
     void shouldRejectPathTraversalInFilename(@TempDir Path tempDir) {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
         assertThatThrownBy(() -> vault.read("../../../etc/passwd"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid filename");
@@ -32,7 +32,7 @@ class VaultServiceTest {
 
     @Test
     void shouldRejectFilenameWithoutMdExtension(@TempDir Path tempDir) {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
         assertThatThrownBy(() -> vault.read("noextension"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid filename");
@@ -45,13 +45,13 @@ class VaultServiceTest {
         Files.createDirectories(tempDir.resolve("brain/resources"));
 
         org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-            () -> new VaultService(tempDir.toString(), new UndoStack())
+            () -> new VaultService(tempDir.toString(), new UndoStack(), true, true, true)
         );
     }
 
     @Test
     void shouldAddActionTagForNonReferenceItem(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "today");
         op.put("title", "Do something");
@@ -68,7 +68,7 @@ class VaultServiceTest {
 
     @Test
     void shouldAddReferenceTagAndRemoveActionForReferenceItem(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "reference");
         op.put("title", "Useful documentation");
@@ -85,7 +85,7 @@ class VaultServiceTest {
 
     @Test
     void shouldHandleNullTagsGracefully(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
         op.put("title", "Task with no tags");
@@ -101,7 +101,7 @@ class VaultServiceTest {
 
     @Test
     void shouldMoveBucketAtomicallyAcrossDirectories(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "someday");
         op.put("title", "Someday task");
@@ -151,7 +151,7 @@ class VaultServiceTest {
 
             """);
 
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
 
         assertThat(inbox.resolve(filename)).exists();
         assertThat(someday.resolve(filename)).doesNotExist();
@@ -177,7 +177,7 @@ class VaultServiceTest {
 
             """);
 
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
 
         assertThat(inbox.resolve(filename)).doesNotExist();
         assertThat(tempDir.resolve("brain/someday").resolve(filename)).exists();
@@ -218,7 +218,7 @@ class VaultServiceTest {
 
             """);
 
-        new VaultService(tempDir.toString(), new UndoStack());
+        new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
 
         assertThat(inbox.resolve("_index.md")).exists();
         assertThat(someday.resolve("_index.md")).exists();
@@ -228,7 +228,7 @@ class VaultServiceTest {
 
     @Test
     void shouldNormalizeTagsOnMoveBucket(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack());
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
         op.put("title", "Move to reference");
