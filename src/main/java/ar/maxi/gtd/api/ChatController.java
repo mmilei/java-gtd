@@ -127,8 +127,14 @@ public class ChatController {
         if (targetFile == null) {
             return Map.of("op", "dismiss", "filed", false, "error", "no match found");
         }
-        vault.dismissItem(targetFile);
-        return Map.of("op", "dismiss", "filed", true, "file", targetFile);
+        Map<String, Object> current = vault.read(targetFile);
+        return Map.of(
+            "op", "dismiss",
+            "filed", false,
+            "requires_confirmation", true,
+            "target_file", targetFile,
+            "title", current.getOrDefault("title", targetFile)
+        );
     }
 
     private Map<String, Object> handleMove(Map<String, Object> op) {
