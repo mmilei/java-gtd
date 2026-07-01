@@ -78,6 +78,7 @@ POST   /api/chat                          Classify and file natural language inp
 GET    /api/buckets                       All buckets with item counts
 GET    /api/buckets/{bucket}              Items in a specific bucket
 GET    /api/today                         Today's action list
+GET    /api/tags                          Unique tags with counts per bucket
 GET    /api/items/{filename}              Single item detail
 POST   /api/items/{filename}/done         Mark as done
 POST   /api/items/{filename}/dismiss      Dismiss item

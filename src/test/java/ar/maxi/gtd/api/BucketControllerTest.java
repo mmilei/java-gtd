@@ -55,6 +55,15 @@ class BucketControllerTest {
     }
 
     @Test
+    void tags() throws Exception {
+        when(vault.tagCounts()).thenReturn(Map.of("shopping", Map.of("today", 1, "backlog", 2)));
+        mvc.perform(get("/api/tags"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.shopping.today").value(1))
+                .andExpect(jsonPath("$.shopping.backlog").value(2));
+    }
+
+    @Test
     void getItemFound() throws Exception {
         mvc.perform(get("/api/items/" + FILE))
                 .andExpect(status().isOk())

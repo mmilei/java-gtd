@@ -33,13 +33,15 @@ public class VaultService {
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
+    private static final List<String> ALL_BUCKETS = List.of("today", "backlog", "waiting", "someday", "reference");
 
     public VaultService(
             @Value("${gtd.vault.path}") String vaultPath,
             UndoStack undoStack,
             @Value("${gtd.vault.migrate-today-since:true}") boolean migrateTodaySinceEnabled,
             @Value("${gtd.vault.migrate-timestamps:true}") boolean migrateTimestampsEnabled,
-            @Value("${gtd.vault.migrate-bucket-mismatch:true}") boolean migrateBucketMismatchEnabled) {
+            @Value("${gtd.vault.migrate-bucket-mismatch:true}") boolean migrateBucketMismatchEnabled,
+            @Value("${gtd.vault.migrate-delegado-list:true}") boolean migrateDelegadoListEnabled) {
         this.vaultPath    = vaultPath;
         this.inboxDir     = Path.of(vaultPath, "brain/inbox");
         this.somedayDir   = Path.of(vaultPath, "brain/someday");
@@ -57,6 +59,7 @@ public class VaultService {
         if (migrateTodaySinceEnabled) migrateTodaySince();
         if (migrateTimestampsEnabled) migrateTimestamps();
         if (migrateBucketMismatchEnabled) migrateBucketMismatch();
+        if (migrateDelegadoListEnabled) migrateDelegadoToList();
     }
 
     public String write(Map<String, Object> item) {
@@ -75,7 +78,8 @@ public class VaultService {
         frontmatter.put("status", "open");
         frontmatter.put("created", LocalDate.now().toString());
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
-        if (item.get("delegado_a") != null) frontmatter.put("delegado_a", item.get("delegado_a"));
+        List<String> delegados = delegadoAsList(item.get("delegado_a"));
+        if (!delegados.isEmpty()) frontmatter.put("delegado_a", delegados);
         List<String> tags = tagsFrom(item);
         normalizeTypeTags(tags, bucket);
         frontmatter.put("tags", tags);
@@ -116,7 +120,7 @@ public class VaultService {
 
     public Map<String, List<Map<String, Object>>> listAll() {
         Map<String, List<Map<String, Object>>> result = new LinkedHashMap<>();
-        for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
+        for (String bucket : ALL_BUCKETS) {
             result.put(bucket, list(bucket));
         }
         return result;
@@ -124,7 +128,7 @@ public class VaultService {
 
     public List<Map<String, Object>> listAllFlat() {
         List<Map<String, Object>> all = new ArrayList<>();
-        for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
+        for (String bucket : ALL_BUCKETS) {
             for (Map<String, Object> item : list(bucket)) {
                 Map<String, Object> slim = new LinkedHashMap<>();
                 slim.put("file", item.get("file"));
@@ -134,6 +138,22 @@ public class VaultService {
             }
         }
         return all;
+    }
+
+    /** Unique tags across the vault with their count per bucket, e.g. {"shopping": {"today": 1, "backlog": 2, ...}}. */
+    public Map<String, Map<String, Integer>> tagCounts() {
+        Map<String, Map<String, Integer>> counts = new TreeMap<>();
+        listAll().forEach((bucket, items) -> items.forEach(item -> {
+            if (!(item.get("tags") instanceof List<?> tags)) return;
+            for (Object t : tags) {
+                counts.computeIfAbsent(String.valueOf(t), k -> {
+                    Map<String, Integer> m = new LinkedHashMap<>();
+                    ALL_BUCKETS.forEach(b -> m.put(b, 0));
+                    return m;
+                }).merge(bucket, 1, Integer::sum);
+            }
+        }));
+        return counts;
     }
 
     public void markDone(String filename) {
@@ -159,7 +179,8 @@ public class VaultService {
     public void patchMeta(String filename, Map<String, Object> meta) {
         Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area");
         mutate(filename, item -> meta.forEach((k, v) -> {
-            if (allowed.contains(k) && v != null) item.put(k, v);
+            if (!allowed.contains(k) || v == null) return;
+            item.put(k, "delegado_a".equals(k) ? delegadoAsList(v) : v);
         }));
     }
 
@@ -184,7 +205,7 @@ public class VaultService {
     public Map<String, Object> stats() {
         Map<String, Integer> counts = new LinkedHashMap<>();
         int total = 0;
-        for (String bucket : List.of("today", "backlog", "waiting", "someday", "reference")) {
+        for (String bucket : ALL_BUCKETS) {
             int count = list(bucket).size();
             counts.put(bucket, count);
             total += count;
@@ -335,6 +356,29 @@ public class VaultService {
             case "someday"   -> somedayDir;
             default          -> inboxDir;
         };
+    }
+
+    /** Rewrites legacy scalar delegado_a ("Juan") as a single-element list (["Juan"]) on disk. */
+    private void migrateDelegadoToList() {
+        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
+                    try {
+                        String content = Files.readString(p);
+                        Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
+                        if (item.get("delegado_a") instanceof String) {
+                            String body = (String) item.remove("body");
+                            item.put("delegado_a", delegadoAsList(item.get("delegado_a")));
+                            Files.writeString(p, MarkdownSerializer.serialize(item, body));
+                        }
+                    } catch (Exception e) {
+                        log.warn("migrateDelegadoToList: skipping {}: {}", p.getFileName(), e.getMessage());
+                    }
+                });
+            } catch (IOException e) {
+                log.warn("migrateDelegadoToList: could not list {}: {}", dir, e.getMessage());
+            }
+        }
     }
 
     private void migrateTodaySince() {
@@ -518,6 +562,22 @@ public class VaultService {
         List<String> tags = (raw instanceof List<?>) ? new ArrayList<>((List<String>) raw) : new ArrayList<>();
         if (!tags.contains("gtd")) tags.add(0, "gtd");
         return tags;
+    }
+
+    /**
+     * Normalizes delegado_a ("related people") to a List<String> regardless of whether the
+     * caller sent a list (frontend, new format) or a bare string (legacy data, old classifier
+     * output) — never both shapes coexist past this point.
+     */
+    private static List<String> delegadoAsList(Object raw) {
+        if (raw instanceof List<?> list) {
+            return list.stream().filter(Objects::nonNull).map(String::valueOf).map(String::strip)
+                .filter(s -> !s.isBlank()).distinct().toList();
+        }
+        if (raw instanceof String s && !s.isBlank()) {
+            return List.of(s.strip());
+        }
+        return List.of();
     }
 
     private static void normalizeTypeTags(List<String> tags, String bucket) {
