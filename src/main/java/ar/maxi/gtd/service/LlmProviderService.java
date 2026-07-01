@@ -1,5 +1,7 @@
 package ar.maxi.gtd.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -25,6 +27,8 @@ import java.util.concurrent.atomic.AtomicReference;
 @Service
 public class LlmProviderService {
 
+    private static final Logger log = LoggerFactory.getLogger(LlmProviderService.class);
+
     public enum LlmProvider { GROQ, OLLAMA }
 
     private final ChatClient groqChatClient;
@@ -45,15 +49,21 @@ public class LlmProviderService {
     }
 
     public String complete(String prompt) {
-        return switch (active.get()) {
-            case GROQ -> groqChatClient.prompt().user(prompt).call().content();
-            case OLLAMA -> {
-                if (ollamaChatClient == null) {
-                    throw new IllegalStateException("Ollama no configurado");
+        LlmProvider provider = active.get();
+        try {
+            return switch (provider) {
+                case GROQ -> groqChatClient.prompt().user(prompt).call().content();
+                case OLLAMA -> {
+                    if (ollamaChatClient == null) {
+                        throw new IllegalStateException("Ollama no configurado");
+                    }
+                    yield ollamaChatClient.prompt().user(prompt).call().content();
                 }
-                yield ollamaChatClient.prompt().user(prompt).call().content();
-            }
-        };
+            };
+        } catch (Exception e) {
+            log.error("LLM completion failed (provider={}): {}", provider, e.getMessage());
+            throw e;
+        }
     }
 
     public Map<String, Object> describeAll() {

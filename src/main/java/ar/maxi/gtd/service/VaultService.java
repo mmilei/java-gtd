@@ -48,6 +48,7 @@ public class VaultService {
         }
         migrateTodaySince();
         migrateTimestamps();
+        migrateBucketMismatch();
     }
 
     public String write(Map<String, Object> item) {
@@ -281,13 +282,18 @@ public class VaultService {
             item.put("updated", LocalDate.now().toString());
             String newContent = MarkdownSerializer.serialize(item, body);
 
+            Files.writeString(file, newContent);
+
             Path newDir = dirFor(newBucket);
             if (!file.getParent().equals(newDir)) {
                 Path dest = newDir.resolve(file.getFileName());
-                Files.writeString(dest, newContent);
-                Files.delete(file);
-            } else {
-                Files.writeString(file, newContent);
+                try {
+                    Files.move(file, dest, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException e) {
+                    log.error("moveBucket: atomic move failed for {} ({} -> {}), file stays at origin with updated content: {}",
+                        filename, file.getParent(), newDir, e.getMessage());
+                    throw e;
+                }
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -344,6 +350,81 @@ public class VaultService {
             } catch (IOException e) {
                 log.warn("migrateTodaySince: could not list {}: {}", dir, e.getMessage());
             }
+        }
+    }
+
+    /**
+     * Self-heals filename duplicates and misplaced files left behind by moveBucket() failures
+     * (write succeeded, move to the new directory didn't). Duplicate: same filename in both
+     * inboxDir and somedayDir — keep the copy whose bucket matches the directory it's in
+     * (tie/mismatch-both broken by most recent "updated"), delete the other. Misplaced-no-duplicate:
+     * single copy sitting in a directory that doesn't match its own bucket field — relocate it.
+     */
+    private void migrateBucketMismatch() {
+        Map<String, List<Path>> byFilename = new LinkedHashMap<>();
+        for (Path dir : List.of(inboxDir, somedayDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md"))
+                     .forEach(p -> byFilename.computeIfAbsent(p.getFileName().toString(), k -> new ArrayList<>()).add(p));
+            } catch (IOException e) {
+                log.warn("migrateBucketMismatch: could not list {}: {}", dir, e.getMessage());
+            }
+        }
+        for (Map.Entry<String, List<Path>> entry : byFilename.entrySet()) {
+            List<Path> paths = entry.getValue();
+            if (paths.size() > 1) {
+                resolveDuplicate(entry.getKey(), paths);
+            } else {
+                relocateIfMismatched(paths.get(0));
+            }
+        }
+    }
+
+    private void resolveDuplicate(String filename, List<Path> paths) {
+        Map<Path, Map<String, Object>> parsed = new LinkedHashMap<>();
+        for (Path p : paths) {
+            Map<String, Object> item = readFile(p);
+            if (item != null) parsed.put(p, item);
+        }
+        if (parsed.size() < 2) return;
+
+        Path keep = null;
+        for (Map.Entry<Path, Map<String, Object>> e : parsed.entrySet()) {
+            String bucket = String.valueOf(e.getValue().getOrDefault("bucket", ""));
+            if (e.getKey().getParent().equals(dirFor(bucket))) {
+                keep = e.getKey();
+                break;
+            }
+        }
+        if (keep == null) {
+            keep = parsed.entrySet().stream()
+                .max(Comparator.comparing(e -> String.valueOf(e.getValue().getOrDefault("updated", e.getValue().getOrDefault("created", "")))))
+                .map(Map.Entry::getKey)
+                .orElse(paths.get(0));
+        }
+        for (Path p : paths) {
+            if (p.equals(keep)) continue;
+            try {
+                Files.delete(p);
+                log.warn("migrateBucketMismatch: removed stale duplicate {} (kept {})", p, keep);
+            } catch (IOException e) {
+                log.warn("migrateBucketMismatch: could not delete stale duplicate {}: {}", p, e.getMessage());
+            }
+        }
+    }
+
+    private void relocateIfMismatched(Path path) {
+        Map<String, Object> item = readFile(path);
+        if (item == null) return;
+        String bucket = String.valueOf(item.getOrDefault("bucket", ""));
+        Path correctDir = dirFor(bucket);
+        if (path.getParent().equals(correctDir)) return;
+        Path dest = correctDir.resolve(path.getFileName());
+        try {
+            Files.move(path, dest, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            log.info("migrateBucketMismatch: relocated {} to {} (bucket: {})", path.getFileName(), correctDir, bucket);
+        } catch (IOException e) {
+            log.warn("migrateBucketMismatch: could not relocate {}: {}", path, e.getMessage());
         }
     }
 
