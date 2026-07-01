@@ -291,7 +291,7 @@ public class VaultService {
             String newContent = MarkdownSerializer.serialize(item, body);
 
             Path newDir = dirFor(newBucket);
-            if (!file.getParent().equals(newDir)) {
+            if (!isInOwnDir(file, newBucket)) {
                 Path dest = newDir.resolve(file.getFileName());
                 try {
                     moveAtomically(file, dest);
@@ -376,51 +376,43 @@ public class VaultService {
      * treated as duplicates just because the same filename convention happens to collide.
      */
     private void migrateBucketMismatch() {
-        Map<String, List<Path>> byFilename = new LinkedHashMap<>();
+        Map<String, List<Map.Entry<Path, Map<String, Object>>>> byFilename = new LinkedHashMap<>();
         for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
             try (Stream<Path> files = Files.list(dir)) {
-                files.filter(p -> p.toString().endsWith(".md"))
-                     .filter(this::hasBucketField)
-                     .forEach(p -> byFilename.computeIfAbsent(p.getFileName().toString(), k -> new ArrayList<>()).add(p));
+                files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
+                    Map<String, Object> item = readFile(p);
+                    if (item != null && item.get("bucket") != null) {
+                        byFilename.computeIfAbsent(p.getFileName().toString(), k -> new ArrayList<>())
+                            .add(Map.entry(p, item));
+                    }
+                });
             } catch (IOException e) {
                 log.warn("migrateBucketMismatch: could not list {}: {}", dir, e.getMessage());
             }
         }
-        for (Map.Entry<String, List<Path>> entry : byFilename.entrySet()) {
-            List<Path> paths = entry.getValue();
-            if (paths.size() > 1) {
-                resolveDuplicate(entry.getKey(), paths);
+        for (List<Map.Entry<Path, Map<String, Object>>> entries : byFilename.values()) {
+            if (entries.size() > 1) {
+                resolveDuplicate(entries);
             } else {
-                relocateIfMismatched(paths.get(0));
+                relocateIfMismatched(entries.get(0));
             }
         }
     }
 
-    private boolean hasBucketField(Path p) {
-        Map<String, Object> item = readFile(p);
-        return item != null && item.get("bucket") != null;
+    private boolean isInOwnDir(Path path, String bucket) {
+        return path.getParent().equals(dirFor(bucket));
     }
 
-    private void resolveDuplicate(String filename, List<Path> paths) {
-        Map<Path, Map<String, Object>> parsed = new LinkedHashMap<>();
-        for (Path p : paths) {
-            Map<String, Object> item = readFile(p);
-            if (item != null) parsed.put(p, item);
-        }
-        if (parsed.size() < 2) return;
-
-        Comparator<Map.Entry<Path, Map<String, Object>>> byOwnDirMatch = Comparator.comparing(e -> {
-            String bucket = String.valueOf(e.getValue().getOrDefault("bucket", ""));
-            return e.getKey().getParent().equals(dirFor(bucket));
-        });
-        Path keep = parsed.entrySet().stream()
+    private void resolveDuplicate(List<Map.Entry<Path, Map<String, Object>>> entries) {
+        Comparator<Map.Entry<Path, Map<String, Object>>> byOwnDirMatch = Comparator.comparing(e ->
+            isInOwnDir(e.getKey(), String.valueOf(e.getValue().getOrDefault("bucket", ""))));
+        Map.Entry<Path, Map<String, Object>> keep = entries.stream()
             .max(byOwnDirMatch.thenComparing(e -> String.valueOf(e.getValue().getOrDefault("updated", e.getValue().getOrDefault("created", "")))))
-            .map(Map.Entry::getKey)
-            .orElse(paths.get(0));
+            .orElseThrow();
 
-        for (Map.Entry<Path, Map<String, Object>> e : parsed.entrySet()) {
-            if (e.getKey().equals(keep)) continue;
-            quarantineDuplicate(e.getKey(), e.getValue(), keep);
+        for (Map.Entry<Path, Map<String, Object>> e : entries) {
+            if (e.getKey().equals(keep.getKey())) continue;
+            quarantineDuplicate(e.getKey(), e.getValue(), keep.getKey());
         }
     }
 
@@ -428,27 +420,35 @@ public class VaultService {
      * A duplicate "loser" is never deleted outright — it's marked dismissed and moved to
      * brain/.archive/duplicates/, out of the directories VaultService actively searches, so a
      * wrong keep/discard decision here is always recoverable by hand instead of silent data loss.
+     * Moves first, with the file's original bytes untouched, and only rewrites the dismissed
+     * status at the destination afterwards — mirrors moveBucket()'s ordering so a failed move
+     * can never leave the loser mutated (and thus wrongly "freshest") back at its origin.
      */
     private void quarantineDuplicate(Path loser, Map<String, Object> item, Path keptAt) {
+        Path dest = archiveDuplicatesDir.resolve(loser.getFileName());
+        try {
+            moveAtomically(loser, dest);
+        } catch (IOException e) {
+            log.warn("migrateBucketMismatch: could not quarantine stale duplicate {}: {}", loser, e.getMessage());
+            return;
+        }
         try {
             String body = (String) item.remove("body");
             item.put("status", "dismissed");
             item.put("dismiss_reason", "duplicate, kept " + keptAt.getFileName());
             item.put("updated", LocalDate.now().toString());
-            Files.writeString(loser, MarkdownSerializer.serialize(item, body));
-            moveAtomically(loser, archiveDuplicatesDir.resolve(loser.getFileName()));
+            Files.writeString(dest, MarkdownSerializer.serialize(item, body));
             log.warn("migrateBucketMismatch: quarantined stale duplicate {} (kept {})", loser.getFileName(), keptAt);
         } catch (IOException e) {
-            log.warn("migrateBucketMismatch: could not quarantine stale duplicate {}: {}", loser, e.getMessage());
+            log.warn("migrateBucketMismatch: quarantined {} but failed to stamp dismissed status: {}", loser.getFileName(), e.getMessage());
         }
     }
 
-    private void relocateIfMismatched(Path path) {
-        Map<String, Object> item = readFile(path);
-        if (item == null) return;
-        String bucket = String.valueOf(item.getOrDefault("bucket", ""));
+    private void relocateIfMismatched(Map.Entry<Path, Map<String, Object>> entry) {
+        Path path = entry.getKey();
+        String bucket = String.valueOf(entry.getValue().getOrDefault("bucket", ""));
+        if (isInOwnDir(path, bucket)) return;
         Path correctDir = dirFor(bucket);
-        if (path.getParent().equals(correctDir)) return;
         Path dest = correctDir.resolve(path.getFileName());
         try {
             moveAtomically(path, dest);
