@@ -36,6 +36,11 @@ public class BucketController {
         return vault.list(bucket);
     }
 
+    @GetMapping("/tags")
+    public Map<String, Map<String, Integer>> tags() {
+        return vault.tagCounts();
+    }
+
     @PostMapping("/items/{filename}/done")
     public ResponseEntity<Map<String, Object>> markDone(@PathVariable String filename) {
         vault.markDone(filename);

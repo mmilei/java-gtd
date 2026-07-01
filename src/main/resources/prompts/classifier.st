@@ -23,7 +23,7 @@ Is it a concrete action someone can do?
 ## Available operations
 
 1. "create" — new task
-   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or name), tags [], message (only for now/discard)
+   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or array of names), tags [], message (only for now/discard)
    Tags: always ["gtd"] + at least 1 context tag inferred from the title:
      purchase/grocery/supermarket/store/buy → "shopping" | doctor/health/medicine/appointment/gym/dentist → "health"
      call/whatsapp/message/contact → "calls" | work/meeting/job → "work"
