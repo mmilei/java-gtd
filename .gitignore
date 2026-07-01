@@ -10,3 +10,5 @@ target/
 *.env
 .env.local
 application-local.properties
+src/main/resources/prompts/classifier_custom.st
+src/main/resources/prompts/classifier-fallback-custom.st

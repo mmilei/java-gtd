@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
@@ -29,13 +30,17 @@ public class ClassifierService {
 
     private static final Set<String> NON_FILING_BUCKETS = Set.of("now", "discard");
 
-    public ClassifierService(LlmProviderService llmProviders, ObjectMapper objectMapper, VaultService vault) {
+    public ClassifierService(
+            LlmProviderService llmProviders,
+            ObjectMapper objectMapper,
+            VaultService vault,
+            @Value("${classifier.template:sample}") String classifierTemplate) {
         this.llmProviders = llmProviders;
         this.objectMapper = objectMapper;
         try {
-            this.promptTemplate = new ClassPathResource("prompts/classifier.st")
+            this.promptTemplate = new ClassPathResource(templateResourcePath(classifierTemplate, false))
                 .getContentAsString(StandardCharsets.UTF_8);
-            this.fallbackTemplate = new ClassPathResource("prompts/classifier-fallback.st")
+            this.fallbackTemplate = new ClassPathResource(templateResourcePath(classifierTemplate, true))
                 .getContentAsString(StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -43,6 +48,22 @@ public class ClassifierService {
         String ctx = vault.readContextFile("_context/user-profile.md");
         this.userContext = ctx.isBlank() ? "(no user profile loaded)" : ctx;
         log.info("user-profile loaded: {} chars", this.userContext.length());
+    }
+
+    /**
+     * Pure resource-path resolution, no IO — directly unit-testable. "custom" loads the
+     * gitignored, Argentinized personal templates (classifier_custom.st /
+     * classifier-fallback-custom.st); any other value — including the "sample" default and
+     * unrecognized input — falls back to the committed English sample templates, since those
+     * are the only ones guaranteed to exist in a public checkout (the custom files are
+     * local-only and absent from CI / anyone else's clone).
+     */
+    static String templateResourcePath(String classifierTemplate, boolean fallback) {
+        boolean custom = "custom".equals(classifierTemplate);
+        if (fallback) {
+            return custom ? "prompts/classifier-fallback-custom.st" : "prompts/classifier-fallback.st";
+        }
+        return custom ? "prompts/classifier_custom.st" : "prompts/classifier.st";
     }
 
     /**
