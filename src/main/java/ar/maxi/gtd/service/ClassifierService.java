@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -77,7 +78,87 @@ public class ClassifierService {
             usedFallback = true;
         }
 
+        resolveTargets(ops, openTasks);
         return new ClassifyResult(ops, usedFallback);
+    }
+
+    /**
+     * Replaces each op's target_title with the real target_file resolved against openTasks,
+     * or drops target_file entirely if no confident match exists. The LLM is never trusted to
+     * reproduce an exact filename — it identifies tasks by title, which it does reliably;
+     * matching that title back to a real file is deterministic code, not model output.
+     */
+    private void resolveTargets(List<Map<String, Object>> ops, List<Map<String, Object>> openTasks) {
+        for (Map<String, Object> op : ops) {
+            String opType = (String) op.get("op");
+            if (opType == null || "create".equals(opType)) continue;
+            String resolved = resolveTargetFile(op, openTasks);
+            op.remove("target_title");
+            if (resolved != null) {
+                op.put("target_file", resolved);
+            } else {
+                op.remove("target_file");
+            }
+        }
+    }
+
+    /**
+     * Pure matching logic, no dependencies — directly unit-testable. Tries an exact
+     * (case-insensitive, trimmed) title match first, then a unique substring match. Ambiguous
+     * (multiple candidates) or no match returns null. Falls back to a legacy target_file only if
+     * it's verified present in openTasks, in case the model ignores the target_title contract.
+     */
+    static String resolveTargetFile(Map<String, Object> op, List<Map<String, Object>> openTasks) {
+        Object titleObj = op.get("target_title");
+        String targetTitle = titleObj != null ? String.valueOf(titleObj).strip() : null;
+
+        if (targetTitle != null && !targetTitle.isBlank()) {
+            String norm = normalize(targetTitle);
+
+            // Tasks with a missing/blank title are excluded entirely: a blank normalized title
+            // would otherwise substring-match every query (""  is a substring of anything),
+            // causing exactly the false-positive mistargeting this method exists to prevent.
+            List<Map<String, Object>> candidates = openTasks.stream()
+                .filter(t -> {
+                    Object titleField = t.get("title");
+                    return titleField != null && !String.valueOf(titleField).isBlank();
+                })
+                .toList();
+
+            List<String> exact = candidates.stream()
+                .filter(t -> norm.equals(normalize(String.valueOf(t.get("title")))))
+                .map(t -> (String) t.get("file"))
+                .distinct()
+                .toList();
+            if (exact.size() == 1) return exact.get(0);
+
+            List<String> partial = candidates.stream()
+                .filter(t -> {
+                    String title = normalize(String.valueOf(t.get("title")));
+                    return title.contains(norm) || norm.contains(title);
+                })
+                .map(t -> (String) t.get("file"))
+                .distinct()
+                .toList();
+            if (partial.size() == 1) return partial.get(0);
+
+            return null;
+        }
+
+        Object fileObj = op.get("target_file");
+        if (fileObj != null) {
+            String file = String.valueOf(fileObj);
+            boolean known = openTasks.stream().anyMatch(t -> file.equals(t.get("file")));
+            if (known) return file;
+        }
+        return null;
+    }
+
+    /** Lowercase, trimmed, diacritics stripped — "verificación" and "verificacion" must match. */
+    private static String normalize(String s) {
+        String stripped = Normalizer.normalize(s.strip().toLowerCase(), Normalizer.Form.NFD)
+            .replaceAll("\\p{M}", "");
+        return stripped;
     }
 
     private boolean allNonFiling(List<Map<String, Object>> ops) {
