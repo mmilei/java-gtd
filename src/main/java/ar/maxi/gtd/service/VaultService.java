@@ -27,27 +27,36 @@ public class VaultService {
     private final Path inboxDir;
     private final Path somedayDir;
     private final Path resourcesDir;
+    private final Path archiveDuplicatesDir;
     private final UndoStack undoStack;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
 
-    public VaultService(@Value("${gtd.vault.path}") String vaultPath, UndoStack undoStack) {
+    public VaultService(
+            @Value("${gtd.vault.path}") String vaultPath,
+            UndoStack undoStack,
+            @Value("${gtd.vault.migrate-today-since:true}") boolean migrateTodaySinceEnabled,
+            @Value("${gtd.vault.migrate-timestamps:true}") boolean migrateTimestampsEnabled,
+            @Value("${gtd.vault.migrate-bucket-mismatch:true}") boolean migrateBucketMismatchEnabled) {
         this.vaultPath    = vaultPath;
         this.inboxDir     = Path.of(vaultPath, "brain/inbox");
         this.somedayDir   = Path.of(vaultPath, "brain/someday");
         this.resourcesDir = Path.of(vaultPath, "brain/resources");
+        this.archiveDuplicatesDir = Path.of(vaultPath, "brain/.archive/duplicates");
         this.undoStack = undoStack;
         try {
             Files.createDirectories(inboxDir);
             Files.createDirectories(somedayDir);
             Files.createDirectories(resourcesDir);
+            Files.createDirectories(archiveDuplicatesDir);
         } catch (IOException e) {
             log.error("Could not create vault directories: {}", e.getMessage());
         }
-        migrateTodaySince();
-        migrateTimestamps();
+        if (migrateTodaySinceEnabled) migrateTodaySince();
+        if (migrateTimestampsEnabled) migrateTimestamps();
+        if (migrateBucketMismatchEnabled) migrateBucketMismatch();
     }
 
     public String write(Map<String, Object> item) {
@@ -282,10 +291,16 @@ public class VaultService {
             String newContent = MarkdownSerializer.serialize(item, body);
 
             Path newDir = dirFor(newBucket);
-            if (!file.getParent().equals(newDir)) {
+            if (!isInOwnDir(file, newBucket)) {
                 Path dest = newDir.resolve(file.getFileName());
+                try {
+                    moveAtomically(file, dest);
+                } catch (IOException e) {
+                    log.error("moveBucket: atomic move failed for {} ({} -> {}), file untouched at origin: {}",
+                        filename, file.getParent(), newDir, e.getMessage());
+                    throw e;
+                }
                 Files.writeString(dest, newContent);
-                Files.delete(file);
             } else {
                 Files.writeString(file, newContent);
             }
@@ -345,6 +360,114 @@ public class VaultService {
                 log.warn("migrateTodaySince: could not list {}: {}", dir, e.getMessage());
             }
         }
+    }
+
+    /**
+     * Self-heals filename duplicates and misplaced files left behind by moveBucket() failures.
+     * Duplicate: same filename in more than one of inboxDir/somedayDir/resourcesDir — keep the
+     * copy whose bucket matches the directory it's in, breaking ties (or mismatch-both) by most
+     * recent "updated"; quarantine the other (see quarantineDuplicate — never deleted outright).
+     * Misplaced-no-duplicate: single copy sitting in a directory that doesn't match its own
+     * bucket field — relocate it.
+     *
+     * Only touches files that actually have a "bucket" key — brain/inbox and brain/someday also
+     * hold non-GTD notes (meta index pages, freeform ideas/someday-maybe entries with their own
+     * type/status schema) that were never written by VaultService and must not be moved or
+     * treated as duplicates just because the same filename convention happens to collide.
+     */
+    private void migrateBucketMismatch() {
+        Map<String, List<Map.Entry<Path, Map<String, Object>>>> byFilename = new LinkedHashMap<>();
+        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
+                    Map<String, Object> item = readFile(p);
+                    if (item != null && item.get("bucket") != null) {
+                        byFilename.computeIfAbsent(p.getFileName().toString(), k -> new ArrayList<>())
+                            .add(Map.entry(p, item));
+                    }
+                });
+            } catch (IOException e) {
+                log.warn("migrateBucketMismatch: could not list {}: {}", dir, e.getMessage());
+            }
+        }
+        for (List<Map.Entry<Path, Map<String, Object>>> entries : byFilename.values()) {
+            if (entries.size() > 1) {
+                resolveDuplicate(entries);
+            } else {
+                relocateIfMismatched(entries.get(0));
+            }
+        }
+    }
+
+    private boolean isInOwnDir(Path path, String bucket) {
+        return path.getParent().equals(dirFor(bucket));
+    }
+
+    private void resolveDuplicate(List<Map.Entry<Path, Map<String, Object>>> entries) {
+        Comparator<Map.Entry<Path, Map<String, Object>>> byOwnDirMatch = Comparator.comparing(e ->
+            isInOwnDir(e.getKey(), String.valueOf(e.getValue().getOrDefault("bucket", ""))));
+        Map.Entry<Path, Map<String, Object>> keep = entries.stream()
+            .max(byOwnDirMatch.thenComparing(e -> String.valueOf(e.getValue().getOrDefault("updated", e.getValue().getOrDefault("created", "")))))
+            .orElseThrow();
+
+        for (Map.Entry<Path, Map<String, Object>> e : entries) {
+            if (e.getKey().equals(keep.getKey())) continue;
+            quarantineDuplicate(e.getKey(), e.getValue(), keep.getKey());
+        }
+    }
+
+    /**
+     * A duplicate "loser" is never deleted outright — it's marked dismissed and moved to
+     * brain/.archive/duplicates/, out of the directories VaultService actively searches, so a
+     * wrong keep/discard decision here is always recoverable by hand instead of silent data loss.
+     * Moves first, with the file's original bytes untouched, and only rewrites the dismissed
+     * status at the destination afterwards — mirrors moveBucket()'s ordering so a failed move
+     * can never leave the loser mutated (and thus wrongly "freshest") back at its origin.
+     */
+    private void quarantineDuplicate(Path loser, Map<String, Object> item, Path keptAt) {
+        Path dest = archiveDuplicatesDir.resolve(loser.getFileName());
+        try {
+            moveAtomically(loser, dest);
+        } catch (IOException e) {
+            log.warn("migrateBucketMismatch: could not quarantine stale duplicate {}: {}", loser, e.getMessage());
+            return;
+        }
+        try {
+            String body = (String) item.remove("body");
+            item.put("status", "dismissed");
+            item.put("dismiss_reason", "duplicate, kept " + keptAt.getFileName());
+            item.put("updated", LocalDate.now().toString());
+            Files.writeString(dest, MarkdownSerializer.serialize(item, body));
+            log.warn("migrateBucketMismatch: quarantined stale duplicate {} (kept {})", loser.getFileName(), keptAt);
+        } catch (IOException e) {
+            log.warn("migrateBucketMismatch: quarantined {} but failed to stamp dismissed status: {}", loser.getFileName(), e.getMessage());
+        }
+    }
+
+    private void relocateIfMismatched(Map.Entry<Path, Map<String, Object>> entry) {
+        Path path = entry.getKey();
+        String bucket = String.valueOf(entry.getValue().getOrDefault("bucket", ""));
+        if (isInOwnDir(path, bucket)) return;
+        Path correctDir = dirFor(bucket);
+        Path dest = correctDir.resolve(path.getFileName());
+        try {
+            moveAtomically(path, dest);
+            log.info("migrateBucketMismatch: relocated {} to {} (bucket: {})", path.getFileName(), correctDir, bucket);
+        } catch (IOException e) {
+            log.warn("migrateBucketMismatch: could not relocate {}: {}", path, e.getMessage());
+        }
+    }
+
+    /**
+     * Files.move(..., ATOMIC_MOVE) on Windows silently overwrites an existing destination
+     * instead of throwing (unlike POSIX filesystems) — explicit existence check makes the
+     * "never silently clobber a file" guarantee hold on every platform.
+     */
+    private void moveAtomically(Path src, Path dest) throws IOException {
+        if (Files.exists(dest)) {
+            throw new java.nio.file.FileAlreadyExistsException(dest.toString());
+        }
+        Files.move(src, dest, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
     }
 
     private synchronized void mutate(String filename, java.util.function.Consumer<Map<String, Object>> modifier) {

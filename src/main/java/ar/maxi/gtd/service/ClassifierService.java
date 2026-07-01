@@ -82,8 +82,8 @@ public class ClassifierService {
         String response1 = call(level1);
         try {
             ops = parseJsonList(response1);
-        } catch (Exception ignored) {
-            // parse failed → try fallback
+        } catch (Exception e) {
+            log.warn("Level 1 classification failed to parse, falling back to level 2: {}", e.getMessage());
         }
 
         if (ops == null || allNonFiling(ops)) {
