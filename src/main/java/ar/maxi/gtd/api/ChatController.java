@@ -100,8 +100,14 @@ public class ChatController {
         if (targetFile == null) {
             return Map.of("op", "done", "filed", false, "error", "no match found");
         }
+        Map<String, Object> current = vault.read(targetFile);
         vault.markDone(targetFile);
-        return Map.of("op", "done", "filed", true, "file", targetFile);
+        return Map.of(
+            "op", "done",
+            "filed", true,
+            "file", targetFile,
+            "title", current.getOrDefault("title", targetFile)
+        );
     }
 
     private Map<String, Object> handleEdit(Map<String, Object> op) {
@@ -144,8 +150,15 @@ public class ChatController {
         }
         String newBucket = (String) op.get("new_bucket");
         String due = (String) op.get("due");
+        Map<String, Object> current = vault.read(targetFile);
         vault.moveBucket(targetFile, newBucket, due);
-        return Map.of("op", "move", "filed", true, "file", targetFile, "new_bucket", newBucket);
+        return Map.of(
+            "op", "move",
+            "filed", true,
+            "file", targetFile,
+            "new_bucket", newBucket,
+            "title", current.getOrDefault("title", targetFile)
+        );
     }
 
     private Map<String, Object> handlePatch(Map<String, Object> op) {
