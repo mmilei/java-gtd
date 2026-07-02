@@ -87,14 +87,39 @@ class ChatControllerTest {
                 Map.of("op", "done", "target_file", "20260625-120000-test.md")
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+        when(vault.read("20260625-120000-test.md")).thenReturn(
+                Map.of("title", "Test task", "body", "Some content", "bucket", "today")
+        );
 
         mvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"message\":\"done with the task\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ops[0].op").value("done"))
-                .andExpect(jsonPath("$.ops[0].filed").value(true));
+                .andExpect(jsonPath("$.ops[0].filed").value(true))
+                .andExpect(jsonPath("$.ops[0].title").value("Test task"));
         verify(vault).markDone("20260625-120000-test.md");
+    }
+
+    @Test
+    void chatMoveOp() throws Exception {
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "move", "target_file", "20260625-120000-test.md", "new_bucket", "today")
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+        when(vault.read("20260625-120000-test.md")).thenReturn(
+                Map.of("title", "Test task", "body", "Some content", "bucket", "backlog")
+        );
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"move the test task to today\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ops[0].op").value("move"))
+                .andExpect(jsonPath("$.ops[0].filed").value(true))
+                .andExpect(jsonPath("$.ops[0].new_bucket").value("today"))
+                .andExpect(jsonPath("$.ops[0].title").value("Test task"));
+        verify(vault).moveBucket("20260625-120000-test.md", "today", null);
     }
 
     @Test
