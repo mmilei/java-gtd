@@ -411,6 +411,24 @@ class VaultServiceTest {
     }
 
     @Test
+    void shouldPassThroughEstimateMinutesOnWriteAndAcceptItInPatchMeta(@TempDir Path tempDir) throws Exception {
+        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+
+        // classifier op carries estimate_minutes → generic passthrough files it in the frontmatter
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Clean the kitchen");
+        op.put("tags", new java.util.ArrayList<>(List.of("home")));
+        op.put("estimate_minutes", 30);
+        String filename = vault.write(op);
+
+        assertThat(vault.read(filename).get("estimate_minutes")).isEqualTo(30);
+
+        vault.patchMeta(filename, Map.of("estimate_minutes", 45));
+        assertThat(vault.read(filename).get("estimate_minutes")).isEqualTo(45);
+    }
+
+    @Test
     void shouldMigrateLegacyScalarDelegadoAToList(@TempDir Path tempDir) throws Exception {
         Path inbox = tempDir.resolve("brain/inbox");
         Files.createDirectories(inbox);

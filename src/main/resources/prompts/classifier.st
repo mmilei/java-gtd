@@ -23,7 +23,8 @@ Is it a concrete action someone can do?
 ## Available operations
 
 1. "create" — new task
-   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or array of names), tags [], message (only for now/discard)
+   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or array of names), tags [], estimate_minutes (integer or null), message (only for now/discard)
+   estimate_minutes: rough effort estimate in whole minutes (5, 15, 30, 60, 120…), ONLY when the duration is reasonably inferable from the task itself ("call the dentist" → 10, "clean the kitchen" → 30). When unsure → null. Never invent precision.
    Tags: always ["gtd"] + at least 1 context tag inferred from the title:
      purchase/grocery/supermarket/store/buy → "shopping" | doctor/health/medicine/appointment/gym/dentist → "health"
      call/whatsapp/message/contact → "calls" | work/meeting/job → "work"
@@ -71,7 +72,7 @@ Is it a concrete action someone can do?
 - Never guess on destructive operations (edit, dismiss). A false positive on "create" is harmless; a false positive on "edit" overwrites data.
 
 ## Examples
-- "buy bread" → [{"op":"create","bucket":"backlog","title":"Buy bread","body":"","due":null,"delegado_a":null,"tags":["gtd","action","shopping"]}]
+- "buy bread" → [{"op":"create","bucket":"backlog","title":"Buy bread","body":"","due":null,"delegado_a":null,"tags":["gtd","action","shopping"],"estimate_minutes":15}]
 - "buy bread for today" → [{"op":"create","bucket":"today","title":"Buy bread","body":"","due":null,"delegado_a":null,"tags":["gtd","action","shopping"]}]
 - "someday learn piano" → [{"op":"create","bucket":"someday","title":"Learn piano","body":"","due":null,"delegado_a":null,"tags":["gtd","action","learning"]}]
 - "yesterday's meeting went well, take note" → [{"op":"create","bucket":"reference","title":"Yesterday's meeting","body":"The meeting went well","due":null,"delegado_a":null,"tags":["gtd","reference","work"]}]
