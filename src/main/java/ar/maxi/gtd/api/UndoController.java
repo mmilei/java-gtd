@@ -24,8 +24,14 @@ public class UndoController {
         this.vault = vault;
     }
 
+    /**
+     * synchronized so two near-simultaneous requests (e.g. a double-clicked Undo button) can't
+     * both read the same nextUndoable() target before either has appended its undo marker — the
+     * second one would otherwise redo the same restore, or hit a FileAlreadyExistsException from
+     * a move whose source the first request already consumed.
+     */
     @PostMapping("/undo")
-    public ResponseEntity<Map<String, Object>> undo() {
+    public synchronized ResponseEntity<Map<String, Object>> undo() {
         Optional<Event> target = eventLog.nextUndoable();
         if (target.isEmpty()) {
             return ResponseEntity.ok(Map.of("undone", false, "reason", "empty stack"));

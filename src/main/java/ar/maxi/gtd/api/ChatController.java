@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
@@ -110,10 +111,16 @@ public class ChatController {
     /** Raw transcript, interleaved with whether each pending requires_confirmation op has since been resolved — lets the frontend rehydrate cards on page reload. */
     @GetMapping("/chat/history")
     public List<Map<String, Object>> history(@RequestParam(defaultValue = "50") int limit) {
-        return transcript.tail(limit).stream().map(this::toHistoryEntry).collect(Collectors.toList());
+        // Read the event log once for the whole response instead of once per op — deserializeOpsWithResolution
+        // used to call eventLog.tail(0, null, null) inside a loop over every requires_confirmation op.
+        Set<String> confirmedKeys = eventLog.tail(0, null, null).stream()
+            .filter(e -> "confirmed".equals(e.confirmation()) && e.chatRef() != null)
+            .map(e -> e.chatRef() + "|" + e.file())
+            .collect(Collectors.toSet());
+        return transcript.tail(limit).stream().map(m -> toHistoryEntry(m, confirmedKeys)).collect(Collectors.toList());
     }
 
-    private Map<String, Object> toHistoryEntry(ChatMessage m) {
+    private Map<String, Object> toHistoryEntry(ChatMessage m, Set<String> confirmedKeys) {
         Map<String, Object> entry = new LinkedHashMap<>();
         entry.put("id", m.id());
         entry.put("ts", m.ts());
@@ -123,12 +130,12 @@ public class ChatController {
             return entry;
         }
         entry.put("fallback", m.fallback());
-        entry.put("ops", deserializeOpsWithResolution(m));
+        entry.put("ops", deserializeOpsWithResolution(m, confirmedKeys));
         return entry;
     }
 
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> deserializeOpsWithResolution(ChatMessage assistantMsg) {
+    private List<Map<String, Object>> deserializeOpsWithResolution(ChatMessage assistantMsg, Set<String> confirmedKeys) {
         List<Map<String, Object>> ops;
         try {
             ops = mapper.readValue(assistantMsg.text(), List.class);
@@ -138,10 +145,7 @@ public class ChatController {
         for (Map<String, Object> op : ops) {
             if (!Boolean.TRUE.equals(op.get("requires_confirmation"))) continue;
             String targetFile = (String) op.get("target_file");
-            boolean resolved = eventLog.tail(0, null, null).stream()
-                .anyMatch(e -> "confirmed".equals(e.confirmation())
-                    && assistantMsg.id().equals(e.chatRef())
-                    && targetFile != null && targetFile.equals(e.file()));
+            boolean resolved = targetFile != null && confirmedKeys.contains(assistantMsg.id() + "|" + targetFile);
             op.put("resolved", resolved);
         }
         return ops;

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -637,6 +638,68 @@ class VaultServiceTest {
         String filename = vault.write(op, Actor.LLM);
 
         assertThat(vault.read(filename)).doesNotContainKey("confirmed");
+    }
+
+    @Test
+    void migrateBucketMismatchShouldNotCrashOnAnUnrecognizedBucketValueAndShouldLeaveTheFileInPlace(@TempDir Path tempDir) throws Exception {
+        Path backlog = tempDir.resolve("brain/backlog");
+        Files.createDirectories(backlog);
+
+        // "inbox" was never a valid bucket value, but a hand-edited frontmatter or leftover from
+        // an older schema could plausibly put it here — the self-healing migration must not crash.
+        String filename = "20260701-000000-legacy-bucket-value.md";
+        Files.writeString(backlog.resolve(filename), """
+            ---
+            type: action
+            title: Weird legacy bucket
+            bucket: inbox
+            status: open
+            created: 2026-07-01
+            updated: 2026-07-01
+            tags: [gtd, action]
+            ---
+
+            """);
+
+        VaultService vault = org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> newVault(tempDir));
+
+        assertThat(backlog.resolve(filename)).exists();
+        assertThat(vault.read(filename).get("bucket")).isEqualTo("inbox");
+    }
+
+    @Test
+    void listCompletedSinceAndHistoryShouldSortByDoneDateNotByALaterMetadataEdit(@TempDir Path tempDir) throws Exception {
+        Path done = tempDir.resolve("brain/done");
+        Files.createDirectories(done);
+        String filename = "20260620-000000-completed-a-week-ago.md";
+        Files.writeString(done.resolve(filename), """
+            ---
+            type: action
+            title: Completed a week ago
+            bucket: backlog
+            status: done
+            created: 2026-06-20
+            updated: 2026-06-20
+            done_date: '2026-06-20'
+            tags: [gtd, action]
+            ---
+
+            """);
+
+        VaultService vault = newVault(tempDir);
+
+        // editing an already-done item bumps `updated` to today but must not affect done_date
+        vault.patchMeta(filename, Map.of("tags", List.of("gtd", "action", "retagged")), Actor.USER);
+        Map<String, Object> reread = vault.read(filename);
+        assertThat(reread.get("done_date")).isEqualTo("2026-06-20");
+        assertThat(reread.get("updated")).isEqualTo(LocalDate.now().toString());
+
+        // listCompletedSince(3) = "completed in the last 3 days" — must exclude this despite today's edit
+        assertThat(vault.listCompletedSince(3).stream().anyMatch(m -> filename.equals(m.get("file"))))
+            .as("a task done a week ago shouldn't reappear as newly-completed just because it was edited today")
+            .isFalse();
+
+        assertThat(vault.history(1).get(0).get("done_date")).isEqualTo("2026-06-20");
     }
 
     @Test

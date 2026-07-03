@@ -54,7 +54,8 @@ public class TranscriptLog {
         return stamped;
     }
 
-    public List<ChatMessage> tail(int limit) {
+    /** synchronized on the same monitor as append()/rotateStaleMonths() — otherwise a read here can land mid-rotation and see a truncated transcript.jsonl. */
+    public synchronized List<ChatMessage> tail(int limit) {
         List<ChatMessage> all = readAll();
         if (limit <= 0 || all.size() <= limit) return all;
         return all.subList(all.size() - limit, all.size());
