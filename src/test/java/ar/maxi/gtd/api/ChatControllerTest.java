@@ -55,7 +55,9 @@ class ChatControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.fallback").value(false))
                 .andExpect(jsonPath("$.ops[0].op").value("create"))
-                .andExpect(jsonPath("$.ops[0].filed").value(true));
+                .andExpect(jsonPath("$.ops[0].filed").value(true))
+                .andExpect(jsonPath("$.ops[0].confirmed").value(true));
+        verify(vault).write(argThat(m -> !m.containsKey("confirmed")), eq(Actor.LLM));
     }
 
     @Test
@@ -87,7 +89,9 @@ class ChatControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"message\":\"someday learn piano\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.fallback").value(true));
+                .andExpect(jsonPath("$.fallback").value(true))
+                .andExpect(jsonPath("$.ops[0].confirmed").value(false));
+        verify(vault).write(argThat(m -> Boolean.FALSE.equals(m.get("confirmed"))), eq(Actor.LLM));
     }
 
     @Test

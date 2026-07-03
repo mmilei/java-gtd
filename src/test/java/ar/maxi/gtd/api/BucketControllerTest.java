@@ -87,6 +87,14 @@ class BucketControllerTest {
     }
 
     @Test
+    void confirmItem() throws Exception {
+        mvc.perform(post("/api/items/" + FILE + "/confirm"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.confirmed").value(true));
+        verify(vault).patchMeta(FILE, Map.of("confirmed", true), Actor.USER);
+    }
+
+    @Test
     void dismiss() throws Exception {
         mvc.perform(post("/api/items/" + FILE + "/dismiss"))
                 .andExpect(status().isOk())

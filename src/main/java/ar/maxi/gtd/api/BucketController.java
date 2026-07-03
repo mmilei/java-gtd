@@ -54,6 +54,13 @@ public class BucketController {
         return ResponseEntity.ok(Map.of("dismissed", true, "file", filename));
     }
 
+    /** Flips a low-confidence task's confirmed:false -> true after the user reviewed it — distinct from POST /api/chat/confirm, which approves an edit/update/dismiss the LLM proposed before it's ever written. */
+    @PostMapping("/items/{filename}/confirm")
+    public ResponseEntity<Map<String, Object>> confirmItem(@PathVariable String filename) {
+        vault.patchMeta(filename, Map.of("confirmed", true), Actor.USER);
+        return ResponseEntity.ok(Map.of("confirmed", true, "file", filename));
+    }
+
     @PutMapping("/items/{filename}/meta")
     public ResponseEntity<Map<String, Object>> patchMeta(
             @PathVariable String filename,

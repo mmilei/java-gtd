@@ -614,6 +614,32 @@ class VaultServiceTest {
     }
 
     @Test
+    void shouldPassThroughConfirmedFalseOnWriteAndFlipItViaPatchMeta(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Low confidence task");
+        op.put("confirmed", false);
+        String filename = vault.write(op, Actor.LLM);
+
+        assertThat(vault.read(filename).get("confirmed")).isEqualTo(false);
+
+        vault.patchMeta(filename, Map.of("confirmed", true), Actor.USER);
+        assertThat(vault.read(filename).get("confirmed")).isEqualTo(true);
+    }
+
+    @Test
+    void shouldOmitConfirmedFieldWhenNotProvidedOnWrite(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Normal confidence task");
+        String filename = vault.write(op, Actor.LLM);
+
+        assertThat(vault.read(filename)).doesNotContainKey("confirmed");
+    }
+
+    @Test
     void undoOfCreateShouldDeleteTheFile(@TempDir Path tempDir) throws Exception {
         EventLog eventLog = new EventLog(tempDir.toString());
         VaultService vault = newVault(tempDir, eventLog);

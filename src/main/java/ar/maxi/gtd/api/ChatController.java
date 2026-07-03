@@ -52,7 +52,7 @@ public class ChatController {
         List<Map<String, Object>> discardedOps = new ArrayList<>();
 
         for (Map<String, Object> op : ops) {
-            Map<String, Object> dispatched = dispatch(op);
+            Map<String, Object> dispatched = dispatch(op, result.usedFallback());
             results.add(dispatched);
 
             String bucket = (String) op.get("bucket");
@@ -155,11 +155,11 @@ public class ChatController {
         }
     }
 
-    private Map<String, Object> dispatch(Map<String, Object> op) {
+    private Map<String, Object> dispatch(Map<String, Object> op, boolean usedFallback) {
         String opType = (String) op.get("op");
         try {
             return switch (opType) {
-                case "create" -> handleCreate(op);
+                case "create" -> handleCreate(op, usedFallback);
                 case "done"   -> handleDone(op);
                 case "update" -> handleUpdate(op);
                 case "move"   -> handleMove(op);
@@ -173,7 +173,7 @@ public class ChatController {
         }
     }
 
-    private Map<String, Object> handleCreate(Map<String, Object> op) {
+    private Map<String, Object> handleCreate(Map<String, Object> op, boolean usedFallback) {
         String bucket = (String) op.get("bucket");
         String title  = op.get("title") != null ? (String) op.get("title") : "";
         if ("now".equals(bucket) || "discard".equals(bucket)) {
@@ -185,13 +185,24 @@ public class ChatController {
                 "message", op.getOrDefault("message", "No archivado.")
             );
         }
-        String filename = vault.write(op, Actor.LLM);
+        // usedFallback is a proxy for low classifier confidence, not LLM self-assessment (which
+        // tends to always claim certainty) — confirmed:false queues the task for later review
+        // instead of blocking or silently trusting a shaky classification. Copy rather than
+        // mutate op in place: it may be an immutable Map (Jackson-deserialized ops are mutable,
+        // but callers/tests aren't guaranteed to hand us one).
+        Map<String, Object> toWrite = op;
+        if (usedFallback) {
+            toWrite = new java.util.LinkedHashMap<>(op);
+            toWrite.put("confirmed", false);
+        }
+        String filename = vault.write(toWrite, Actor.LLM);
         return Map.of(
             "op", "create",
             "filed", true,
             "bucket", bucket,
             "file", filename,
-            "title", title
+            "title", title,
+            "confirmed", !usedFallback
         );
     }
 
