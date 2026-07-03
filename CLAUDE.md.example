@@ -1,0 +1,50 @@
+**THIS IS AN EXAMPLE FILE. Create your own `CLAUDE.md` based on it — `CLAUDE.md` is gitignored so each developer can keep local paths and personal conventions out of the repo.**
+
+# java-gtd — agent instructions
+
+## What this is
+
+REST API (Spring Boot 3 + Spring AI) that classifies natural language into GTD buckets
+and writes Markdown notes to an Obsidian vault. See [README.md](README.md) for the overview
+and [docs/](docs/) for the API reference, architecture, and setup.
+
+## Read first
+
+- `README.md` — project overview and quick start
+- `docs/api.md` — full endpoint reference
+- `docs/architecture.md` — services, pipeline, design decisions
+
+## Working rules
+
+- **Never push to master directly.** Branch → push → pull request.
+- Run `mvn test` before committing. All tests must pass.
+- **Never put frontend code in this repo.** The frontend lives in
+  [gtd-frontend](https://github.com/mmilei/gtd-frontend). Do not add anything under
+  `src/main/resources/static/`.
+
+## Key structure
+
+```
+src/main/java/.../api/        controllers (chat, buckets, undo, providers, ...)
+src/main/java/.../service/    ClassifierService, VaultService, LlmProviderService, UndoStack
+src/main/java/.../util/       MarkdownSerializer (YAML frontmatter)
+src/main/resources/prompts/   classifier.st + classifier-fallback.st (two-level prompting)
+src/test/java/                controller tests (@WebMvcTest) + VaultServiceTest (@TempDir)
+```
+
+## Local configuration
+
+Create `src/main/resources/application-local.properties` (gitignored):
+
+```properties
+gtd.vault.path=/path/to/your/obsidian/vault
+# classifier.template=custom     # to use your own gitignored prompt pair
+# ollama.enabled=true            # to enable the local Ollama provider
+```
+
+Set `GROQ_API_KEY` as an environment variable. See [docs/setup.md](docs/setup.md) for all options.
+
+## Notes for your own CLAUDE.md
+
+Add here whatever is personal to your machine or workflow: absolute paths, restart scripts,
+where you track project TODOs, commit-message conventions, etc.
