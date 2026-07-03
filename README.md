@@ -1,7 +1,7 @@
 ![Java](https://img.shields.io/badge/Java-21-blue?logo=openjdk)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen?logo=springboot)
 ![Spring AI](https://img.shields.io/badge/Spring%20AI-1.0-green?logo=spring)
-![Version](https://img.shields.io/badge/version-2.0.1-orange)
+![Version](https://img.shields.io/badge/version-2.1.0-orange)
 ![CI](https://github.com/mmilei/java-gtd/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
