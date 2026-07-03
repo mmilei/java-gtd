@@ -306,17 +306,13 @@ public class VaultService {
                      .map(this::readFile)
                      .filter(Objects::nonNull)
                      .filter(m -> {
-                         String updated = String.valueOf(m.getOrDefault("updated", m.getOrDefault("created", "")));
-                         try { return !LocalDate.parse(updated).isBefore(cutoff); }
+                         try { return !LocalDate.parse(completionDate(m)).isBefore(cutoff); }
                          catch (Exception e) { return false; }
                      })
                      .forEach(all::add);
             } catch (IOException e) { /* empty directory, skip */ }
         }
-        all.sort(Comparator.comparing(
-            m -> String.valueOf(m.getOrDefault("updated", "")),
-            Comparator.reverseOrder()
-        ));
+        all.sort(Comparator.comparing(VaultService::completionDate, Comparator.reverseOrder()));
         return all;
     }
 
@@ -330,11 +326,22 @@ public class VaultService {
                      .forEach(all::add);
             } catch (IOException e) { /* empty directory, skip */ }
         }
-        all.sort(Comparator.comparing(
-            m -> String.valueOf(m.getOrDefault("updated", m.getOrDefault("created", ""))),
-            Comparator.reverseOrder()
-        ));
+        all.sort(Comparator.comparing(VaultService::completionDate, Comparator.reverseOrder()));
         return limit > 0 ? all.subList(0, Math.min(limit, all.size())) : all;
+    }
+
+    /**
+     * done_date/discarded_date are write-once (see markDone/dismissItem) so a later edit to an
+     * already-completed item can't quietly bump it back to the top of history/listCompletedSince
+     * the way the mutable `updated` field would — falls back to updated/created only for the
+     * (should-not-happen post-migration) case where neither is present.
+     */
+    private static String completionDate(Map<String, Object> item) {
+        Object doneDate = item.get("done_date");
+        if (doneDate != null) return String.valueOf(doneDate);
+        Object discardedDate = item.get("discarded_date");
+        if (discardedDate != null) return String.valueOf(discardedDate);
+        return String.valueOf(item.getOrDefault("updated", item.getOrDefault("created", "")));
     }
 
     public void moveBucket(String filename, String newBucket, String due, Actor actor) {
@@ -414,13 +421,16 @@ public class VaultService {
             Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
             if (item.get("bucket") == null) return; // non-GTD note, leave in place
 
+            // done/dismissed routing delegates to expectedDirFor() — the same method
+            // migrateBucketMismatch() uses — so the two migrations can't silently diverge on
+            // where a completed/discarded item belongs.
             String status = String.valueOf(item.getOrDefault("status", ""));
             Path targetDir;
             if ("done".equals(status)) {
-                targetDir = doneDir;
+                targetDir = expectedDirFor(item);
                 item.putIfAbsent("done_date", bestEffortCompletionDate(item));
             } else if ("dismissed".equals(status)) {
-                targetDir = discardDir;
+                targetDir = expectedDirFor(item);
                 item.putIfAbsent("discarded_date", bestEffortCompletionDate(item));
             } else if (sourceDir.equals(legacyInboxDir)) {
                 targetDir = dirFor(String.valueOf(item.get("bucket")));
@@ -534,15 +544,28 @@ public class VaultService {
     }
 
     /** Directory a file should live in given its status/bucket — done/dismissed always win over bucket, which is kept only for historical reference. */
+    /**
+     * Null means "don't know where this belongs" (an unrecognized bucket value — a hand-edited
+     * frontmatter typo, or a legacy value from before this bucket scheme existed) — callers must
+     * treat that as "leave the file alone", not crash. dirFor() intentionally throws for any
+     * caller that's supposed to only ever see the 5 known buckets (write/moveBucket); this
+     * self-healing migration is the one caller that has to tolerate arbitrary on-disk data.
+     */
     private Path expectedDirFor(Map<String, Object> item) {
         String status = String.valueOf(item.getOrDefault("status", ""));
         if ("done".equals(status)) return doneDir;
         if ("dismissed".equals(status)) return discardDir;
-        return dirFor(String.valueOf(item.get("bucket")));
+        try {
+            return dirFor(String.valueOf(item.get("bucket")));
+        } catch (IllegalArgumentException e) {
+            log.warn("migrateBucketMismatch: unrecognized bucket '{}', leaving file in place", item.get("bucket"));
+            return null;
+        }
     }
 
     private boolean isInOwnDir(Path path, Map<String, Object> item) {
-        return path.getParent().equals(expectedDirFor(item));
+        Path expected = expectedDirFor(item);
+        return expected == null || path.getParent().equals(expected);
     }
 
     private void resolveDuplicate(List<Map.Entry<Path, Map<String, Object>>> entries) {

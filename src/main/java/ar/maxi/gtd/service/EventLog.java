@@ -58,7 +58,8 @@ public class EventLog {
         return stamped;
     }
 
-    public List<Event> tail(int limit, Actor actorFilter, String opFilter) {
+    /** synchronized on the same monitor as append()/rotateIfNeeded() — otherwise a read here can land mid-rotation and see a truncated events.jsonl. */
+    public synchronized List<Event> tail(int limit, Actor actorFilter, String opFilter) {
         List<Event> filtered = readAll().stream()
             .filter(e -> actorFilter == null || actorFilter.toJson().equals(e.actor()))
             .filter(e -> opFilter == null || opFilter.equals(e.op()))
@@ -68,13 +69,13 @@ public class EventLog {
     }
 
     /** Most recent mutation not already undone — undo is strictly sequential, one step at a time. */
-    public Optional<Event> nextUndoable() {
+    public synchronized Optional<Event> nextUndoable() {
         List<Event> mutations = undoneFiltered(readAll());
         return mutations.isEmpty() ? Optional.empty() : Optional.of(mutations.get(mutations.size() - 1));
     }
 
     /** Non-destructive peek of what's available to undo, most recent first, capped at MAX_UNDO_DEPTH. */
-    public List<Event> undoableStack() {
+    public synchronized List<Event> undoableStack() {
         List<Event> mutations = undoneFiltered(readAll());
         List<Event> capped = mutations.size() > MAX_UNDO_DEPTH
             ? mutations.subList(mutations.size() - MAX_UNDO_DEPTH, mutations.size())
