@@ -13,18 +13,26 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class VaultServiceTest {
 
+    private static VaultService newVault(Path tempDir) {
+        return new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true, true);
+    }
+
     @Test
     void shouldCreateVaultDirectoriesOnStartup(@TempDir Path tempDir) {
-        new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        newVault(tempDir);
 
-        assertThat(tempDir.resolve("brain/inbox")).isDirectory();
+        assertThat(tempDir.resolve("brain/today")).isDirectory();
+        assertThat(tempDir.resolve("brain/backlog")).isDirectory();
+        assertThat(tempDir.resolve("brain/waiting")).isDirectory();
         assertThat(tempDir.resolve("brain/someday")).isDirectory();
         assertThat(tempDir.resolve("brain/resources")).isDirectory();
+        assertThat(tempDir.resolve("brain/done")).isDirectory();
+        assertThat(tempDir.resolve("brain/discard")).isDirectory();
     }
 
     @Test
     void shouldRejectPathTraversalInFilename(@TempDir Path tempDir) {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
         assertThatThrownBy(() -> vault.read("../../../etc/passwd"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid filename");
@@ -32,7 +40,7 @@ class VaultServiceTest {
 
     @Test
     void shouldRejectFilenameWithoutMdExtension(@TempDir Path tempDir) {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
         assertThatThrownBy(() -> vault.read("noextension"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid filename");
@@ -40,18 +48,20 @@ class VaultServiceTest {
 
     @Test
     void shouldNotFailIfDirectoriesAlreadyExist(@TempDir Path tempDir) throws Exception {
-        Files.createDirectories(tempDir.resolve("brain/inbox"));
+        Files.createDirectories(tempDir.resolve("brain/today"));
+        Files.createDirectories(tempDir.resolve("brain/backlog"));
+        Files.createDirectories(tempDir.resolve("brain/waiting"));
         Files.createDirectories(tempDir.resolve("brain/someday"));
         Files.createDirectories(tempDir.resolve("brain/resources"));
+        Files.createDirectories(tempDir.resolve("brain/done"));
+        Files.createDirectories(tempDir.resolve("brain/discard"));
 
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-            () -> new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true)
-        );
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> newVault(tempDir));
     }
 
     @Test
     void shouldAddActionTagForNonReferenceItem(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "today");
         op.put("title", "Do something");
@@ -64,11 +74,12 @@ class VaultServiceTest {
         List<String> tags = (List<String>) saved.get("tags");
         assertThat(tags).contains("gtd", "action", "work");
         assertThat(tags).doesNotContain("reference");
+        assertThat(tempDir.resolve("brain/today").resolve(filename)).exists();
     }
 
     @Test
     void shouldAddReferenceTagAndRemoveActionForReferenceItem(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "reference");
         op.put("title", "Useful documentation");
@@ -85,7 +96,7 @@ class VaultServiceTest {
 
     @Test
     void shouldHandleNullTagsGracefully(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
         op.put("title", "Task with no tags");
@@ -100,8 +111,18 @@ class VaultServiceTest {
     }
 
     @Test
+    void shouldRejectUnknownBucket(@TempDir Path tempDir) {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "not-a-real-bucket");
+        op.put("title", "Bad bucket");
+
+        assertThatThrownBy(() -> vault.write(op)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void shouldMoveBucketAtomicallyAcrossDirectories(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "someday");
         op.put("title", "Someday task");
@@ -109,24 +130,131 @@ class VaultServiceTest {
         String filename = vault.write(op);
 
         assertThat(tempDir.resolve("brain/someday").resolve(filename)).exists();
-        assertThat(tempDir.resolve("brain/inbox").resolve(filename)).doesNotExist();
 
         vault.moveBucket(filename, "backlog", null);
 
-        assertThat(tempDir.resolve("brain/inbox").resolve(filename)).exists();
+        assertThat(tempDir.resolve("brain/backlog").resolve(filename)).exists();
         assertThat(tempDir.resolve("brain/someday").resolve(filename)).doesNotExist();
         assertThat(vault.read(filename).get("bucket")).isEqualTo("backlog");
     }
 
     @Test
-    void shouldSelfHealDuplicateFilenameAcrossInboxAndSomeday(@TempDir Path tempDir) throws Exception {
-        Path inbox   = tempDir.resolve("brain/inbox");
-        Path someday = tempDir.resolve("brain/someday");
+    void shouldMoveBetweenTodayBacklogAndWaitingEvenThoughTheyUsedToShareADirectory(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "today");
+        op.put("title", "Triage me");
+        String filename = vault.write(op);
+
+        vault.moveBucket(filename, "waiting", null);
+        assertThat(tempDir.resolve("brain/waiting").resolve(filename)).exists();
+        assertThat(tempDir.resolve("brain/today").resolve(filename)).doesNotExist();
+
+        vault.moveBucket(filename, "backlog", null);
+        assertThat(tempDir.resolve("brain/backlog").resolve(filename)).exists();
+        assertThat(tempDir.resolve("brain/waiting").resolve(filename)).doesNotExist();
+    }
+
+    @Test
+    void shouldMoveDoneItemToDoneDirAndSetDoneDateOnce(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "today");
+        op.put("title", "Finish this");
+        String filename = vault.write(op);
+
+        vault.markDone(filename);
+
+        assertThat(tempDir.resolve("brain/done").resolve(filename)).exists();
+        assertThat(tempDir.resolve("brain/today").resolve(filename)).doesNotExist();
+        Map<String, Object> saved = vault.read(filename);
+        assertThat(saved.get("status")).isEqualTo("done");
+        Object doneDate = saved.get("done_date");
+        assertThat(doneDate).isNotNull();
+
+        // editing an already-done item must not overwrite the original done_date
+        Files.writeString(tempDir.resolve("brain/done").resolve(filename),
+            Files.readString(tempDir.resolve("brain/done").resolve(filename)));
+        vault.appendToTask(filename, "extra note");
+        assertThat(vault.read(filename).get("done_date")).isEqualTo(doneDate);
+    }
+
+    @Test
+    void shouldMoveDismissedItemToDiscardDirAndSetDiscardedDateOnce(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Drop this");
+        String filename = vault.write(op);
+
+        vault.dismissItem(filename);
+
+        assertThat(tempDir.resolve("brain/discard").resolve(filename)).exists();
+        assertThat(tempDir.resolve("brain/backlog").resolve(filename)).doesNotExist();
+        Map<String, Object> saved = vault.read(filename);
+        assertThat(saved.get("status")).isEqualTo("dismissed");
+        assertThat(saved.get("discarded_date")).isNotNull();
+    }
+
+    @Test
+    void shouldMigrateExistingLegacyInboxFilesIntoBucketDirsOnStartup(@TempDir Path tempDir) throws Exception {
+        Path inbox = tempDir.resolve("brain/inbox");
         Files.createDirectories(inbox);
+
+        Files.writeString(inbox.resolve("20260101-000000-legacy-today.md"), """
+            ---
+            type: action
+            title: Legacy today task
+            bucket: today
+            status: open
+            created: 2026-01-01
+            tags: [gtd, action]
+            ---
+
+            """);
+        Files.writeString(inbox.resolve("20260101-000001-legacy-done.md"), """
+            ---
+            type: action
+            title: Legacy done task
+            bucket: backlog
+            status: done
+            created: 2026-01-01
+            updated: 2026-01-02
+            tags: [gtd, action]
+            ---
+
+            """);
+        // non-GTD note without a bucket field must stay put
+        Files.writeString(inbox.resolve("_index.md"), """
+            ---
+            type: meta
+            title: "Brain / Inbox"
+            status: active
+            ---
+
+            """);
+
+        newVault(tempDir);
+
+        assertThat(tempDir.resolve("brain/today").resolve("20260101-000000-legacy-today.md")).exists();
+        assertThat(tempDir.resolve("brain/done").resolve("20260101-000001-legacy-done.md")).exists();
+        assertThat(inbox.resolve("20260101-000000-legacy-today.md")).doesNotExist();
+        assertThat(inbox.resolve("20260101-000001-legacy-done.md")).doesNotExist();
+        assertThat(inbox.resolve("_index.md")).exists();
+
+        String movedDone = Files.readString(tempDir.resolve("brain/done").resolve("20260101-000001-legacy-done.md"));
+        assertThat(movedDone).contains("done_date: '2026-01-02'").as("retroactive done_date falls back to updated");
+    }
+
+    @Test
+    void shouldSelfHealDuplicateFilenameAcrossBucketDirs(@TempDir Path tempDir) throws Exception {
+        Path backlog = tempDir.resolve("brain/backlog");
+        Path someday = tempDir.resolve("brain/someday");
+        Files.createDirectories(backlog);
         Files.createDirectories(someday);
 
         String filename = "20260630-090727-duplicated-task.md";
-        Files.writeString(inbox.resolve(filename), """
+        Files.writeString(backlog.resolve(filename), """
             ---
             type: action
             title: Duplicated task
@@ -151,9 +279,9 @@ class VaultServiceTest {
 
             """);
 
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
 
-        assertThat(inbox.resolve(filename)).exists();
+        assertThat(backlog.resolve(filename)).exists();
         assertThat(someday.resolve(filename)).doesNotExist();
         assertThat(vault.read(filename).get("bucket")).isEqualTo("backlog");
 
@@ -164,15 +292,15 @@ class VaultServiceTest {
 
     @Test
     void shouldKeepMostRecentlyUpdatedCopyWhenBothMatchTheirOwnDirectory(@TempDir Path tempDir) throws Exception {
-        Path inbox   = tempDir.resolve("brain/inbox");
+        Path backlog = tempDir.resolve("brain/backlog");
         Path someday = tempDir.resolve("brain/someday");
-        Files.createDirectories(inbox);
+        Files.createDirectories(backlog);
         Files.createDirectories(someday);
 
         // Both copies are individually self-consistent (bucket matches the dir they sit in) —
-        // the inbox copy is scanned first but is the STALE one; someday has the newer edit.
+        // the backlog copy is scanned first but is the STALE one; someday has the newer edit.
         String filename = "20260630-tiebreak-both-consistent.md";
-        Files.writeString(inbox.resolve(filename), """
+        Files.writeString(backlog.resolve(filename), """
             ---
             type: action
             title: Tiebreak task
@@ -197,27 +325,54 @@ class VaultServiceTest {
 
             """);
 
-        new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        newVault(tempDir);
 
         assertThat(someday.resolve(filename)).exists();
-        assertThat(inbox.resolve(filename)).doesNotExist();
+        assertThat(backlog.resolve(filename)).doesNotExist();
         assertThat(tempDir.resolve("brain/.archive/duplicates").resolve(filename)).exists();
     }
 
     @Test
+    void shouldNotFlagADoneItemSittingInDoneDirAsMismatchedEvenThoughItsBucketFieldSaysSomethingElse(@TempDir Path tempDir) throws Exception {
+        Path done = tempDir.resolve("brain/done");
+        Files.createDirectories(done);
+
+        String filename = "20260701-000000-already-done.md";
+        Files.writeString(done.resolve(filename), """
+            ---
+            type: action
+            title: Already done
+            bucket: today
+            status: done
+            created: 2026-07-01
+            updated: 2026-07-01
+            done_date: '2026-07-01'
+            tags: [gtd, action]
+            ---
+
+            """);
+
+        newVault(tempDir);
+
+        // must stay in done/, NOT get relocated back to today/ just because bucket still says "today"
+        assertThat(done.resolve(filename)).exists();
+        assertThat(tempDir.resolve("brain/today").resolve(filename)).doesNotExist();
+    }
+
+    @Test
     void shouldLeaveOriginUntouchedWhenMoveBucketDestinationAlreadyExists(@TempDir Path tempDir) throws Exception {
-        Path inbox   = tempDir.resolve("brain/inbox");
+        Path backlog = tempDir.resolve("brain/backlog");
         Path someday = tempDir.resolve("brain/someday");
-        Files.createDirectories(inbox);
+        Files.createDirectories(backlog);
         Files.createDirectories(someday);
 
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
         op.put("title", "Conflicting move");
         op.put("tags", new java.util.ArrayList<>(List.of("work")));
         String filename = vault.write(op);
-        String originalContent = Files.readString(inbox.resolve(filename));
+        String originalContent = Files.readString(backlog.resolve(filename));
 
         // Pre-create a conflicting file at the move destination to force Files.move to throw.
         Files.writeString(someday.resolve(filename), "conflicting content");
@@ -225,16 +380,16 @@ class VaultServiceTest {
         assertThatThrownBy(() -> vault.moveBucket(filename, "someday", null))
             .isInstanceOf(java.io.UncheckedIOException.class);
 
-        assertThat(Files.readString(inbox.resolve(filename))).isEqualTo(originalContent);
+        assertThat(Files.readString(backlog.resolve(filename))).isEqualTo(originalContent);
     }
 
     @Test
     void shouldRelocateReferenceBucketFileToResourcesDir(@TempDir Path tempDir) throws Exception {
-        Path inbox = tempDir.resolve("brain/inbox");
-        Files.createDirectories(inbox);
+        Path backlog = tempDir.resolve("brain/backlog");
+        Files.createDirectories(backlog);
 
         String filename = "20260701-000000-misplaced-reference-task.md";
-        Files.writeString(inbox.resolve(filename), """
+        Files.writeString(backlog.resolve(filename), """
             ---
             type: reference
             title: Misplaced reference note
@@ -247,20 +402,20 @@ class VaultServiceTest {
 
             """);
 
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
 
-        assertThat(inbox.resolve(filename)).doesNotExist();
+        assertThat(backlog.resolve(filename)).doesNotExist();
         assertThat(tempDir.resolve("brain/resources").resolve(filename)).exists();
         assertThat(vault.read(filename).get("bucket")).isEqualTo("reference");
     }
 
     @Test
     void shouldRelocateFileWhoseBucketDoesNotMatchItsDirectory(@TempDir Path tempDir) throws Exception {
-        Path inbox = tempDir.resolve("brain/inbox");
-        Files.createDirectories(inbox);
+        Path backlog = tempDir.resolve("brain/backlog");
+        Files.createDirectories(backlog);
 
         String filename = "20260701-000000-misplaced-someday-task.md";
-        Files.writeString(inbox.resolve(filename), """
+        Files.writeString(backlog.resolve(filename), """
             ---
             type: action
             title: Misplaced someday task
@@ -273,25 +428,25 @@ class VaultServiceTest {
 
             """);
 
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
 
-        assertThat(inbox.resolve(filename)).doesNotExist();
+        assertThat(backlog.resolve(filename)).doesNotExist();
         assertThat(tempDir.resolve("brain/someday").resolve(filename)).exists();
         assertThat(vault.read(filename).get("bucket")).isEqualTo("someday");
     }
 
     @Test
     void shouldNotTouchNonGtdNotesWithoutBucketField(@TempDir Path tempDir) throws Exception {
-        Path inbox   = tempDir.resolve("brain/inbox");
+        Path backlog = tempDir.resolve("brain/backlog");
         Path someday = tempDir.resolve("brain/someday");
-        Files.createDirectories(inbox);
+        Files.createDirectories(backlog);
         Files.createDirectories(someday);
 
         // Per-directory meta index — same filename in both dirs by design, not a duplicate task.
-        Files.writeString(inbox.resolve("_index.md"), """
+        Files.writeString(backlog.resolve("_index.md"), """
             ---
             type: meta
-            title: "Brain / Inbox"
+            title: "Brain / Backlog"
             status: active
             ---
 
@@ -314,17 +469,17 @@ class VaultServiceTest {
 
             """);
 
-        new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        newVault(tempDir);
 
-        assertThat(inbox.resolve("_index.md")).exists();
+        assertThat(backlog.resolve("_index.md")).exists();
         assertThat(someday.resolve("_index.md")).exists();
         assertThat(someday.resolve("some-idea.md")).exists();
-        assertThat(inbox.resolve("some-idea.md")).doesNotExist();
+        assertThat(backlog.resolve("some-idea.md")).doesNotExist();
     }
 
     @Test
     void shouldNormalizeTagsOnMoveBucket(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
         op.put("title", "Move to reference");
@@ -343,7 +498,7 @@ class VaultServiceTest {
 
     @Test
     void shouldCountTagsAcrossAllFiveBuckets(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
 
         Map<String, Object> today = new java.util.LinkedHashMap<>();
         today.put("bucket", "today");
@@ -376,7 +531,7 @@ class VaultServiceTest {
 
     @Test
     void shouldNormalizeDelegadoAToListOnWriteAndPatch(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
 
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "waiting");
@@ -397,7 +552,7 @@ class VaultServiceTest {
 
     @Test
     void shouldDropNullEntriesFromDelegadoAList(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
 
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "waiting");
@@ -412,7 +567,7 @@ class VaultServiceTest {
 
     @Test
     void shouldPassThroughEstimateMinutesOnWriteAndAcceptItInPatchMeta(@TempDir Path tempDir) throws Exception {
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
 
         // classifier op carries estimate_minutes → generic passthrough files it in the frontmatter
         Map<String, Object> op = new java.util.LinkedHashMap<>();
@@ -430,11 +585,11 @@ class VaultServiceTest {
 
     @Test
     void shouldMigrateLegacyScalarDelegadoAToList(@TempDir Path tempDir) throws Exception {
-        Path inbox = tempDir.resolve("brain/inbox");
-        Files.createDirectories(inbox);
+        Path backlog = tempDir.resolve("brain/backlog");
+        Files.createDirectories(backlog);
 
         String filename = "20260701-000000-legacy-delegado.md";
-        Files.writeString(inbox.resolve(filename), """
+        Files.writeString(backlog.resolve(filename), """
             ---
             type: action
             title: Legacy delegado
@@ -447,7 +602,7 @@ class VaultServiceTest {
 
             """);
 
-        VaultService vault = new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true);
+        VaultService vault = newVault(tempDir);
 
         @SuppressWarnings("unchecked")
         List<String> delegados = (List<String>) vault.read(filename).get("delegado_a");
