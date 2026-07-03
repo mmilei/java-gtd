@@ -1,5 +1,6 @@
 package ar.maxi.gtd.api;
 
+import ar.maxi.gtd.service.Actor;
 import ar.maxi.gtd.service.MarkdownifyService;
 import ar.maxi.gtd.service.VaultService;
 import org.springframework.http.ResponseEntity;
@@ -43,21 +44,28 @@ public class BucketController {
 
     @PostMapping("/items/{filename}/done")
     public ResponseEntity<Map<String, Object>> markDone(@PathVariable String filename) {
-        vault.markDone(filename);
+        vault.markDone(filename, Actor.USER);
         return ResponseEntity.ok(Map.of("done", true, "file", filename));
     }
 
     @PostMapping("/items/{filename}/dismiss")
     public ResponseEntity<Map<String, Object>> dismiss(@PathVariable String filename) {
-        vault.dismissItem(filename);
+        vault.dismissItem(filename, Actor.USER);
         return ResponseEntity.ok(Map.of("dismissed", true, "file", filename));
+    }
+
+    /** Flips a low-confidence task's confirmed:false -> true after the user reviewed it — distinct from POST /api/chat/confirm, which approves an edit/update/dismiss the LLM proposed before it's ever written. */
+    @PostMapping("/items/{filename}/confirm")
+    public ResponseEntity<Map<String, Object>> confirmItem(@PathVariable String filename) {
+        vault.patchMeta(filename, Map.of("confirmed", true), Actor.USER);
+        return ResponseEntity.ok(Map.of("confirmed", true, "file", filename));
     }
 
     @PutMapping("/items/{filename}/meta")
     public ResponseEntity<Map<String, Object>> patchMeta(
             @PathVariable String filename,
             @RequestBody Map<String, Object> meta) {
-        vault.patchMeta(filename, meta);
+        vault.patchMeta(filename, meta, Actor.USER);
         return ResponseEntity.ok(Map.of("updated", true, "file", filename));
     }
 
@@ -69,7 +77,7 @@ public class BucketController {
         if (newBody == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "body is required"));
         }
-        vault.replaceBody(filename, newBody);
+        vault.replaceBody(filename, newBody, Actor.USER);
         return ResponseEntity.ok(Map.of("updated", true, "file", filename));
     }
 
@@ -88,7 +96,7 @@ public class BucketController {
             @RequestBody Map<String, String> body) {
         String bucket = body.get("bucket");
         if (bucket == null) return ResponseEntity.badRequest().body(Map.of("error", "bucket is required"));
-        vault.moveBucket(filename, bucket, body.get("due"));
+        vault.moveBucket(filename, bucket, body.get("due"), Actor.USER);
         return ResponseEntity.ok(Map.of("moved", true, "file", filename, "bucket", bucket));
     }
 
@@ -102,8 +110,8 @@ public class BucketController {
             @SuppressWarnings("unchecked")
             List<String> tags = (List<String>) item.getOrDefault("tags", List.of());
             MarkdownifyService.EnrichResult result = markdownify.enrich(title, body, bucket, tags);
-            vault.replaceBody(filename, result.body());
-            vault.patchMeta(filename, Map.of("tags", result.tags(), "markdownified", true));
+            vault.replaceBody(filename, result.body(), Actor.USER);
+            vault.patchMeta(filename, Map.of("tags", result.tags(), "markdownified", true), Actor.USER);
             return ResponseEntity.ok(Map.of(
                 "file", filename,
                 "body", result.body(),

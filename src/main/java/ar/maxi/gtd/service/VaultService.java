@@ -24,11 +24,17 @@ public class VaultService {
     private static final Logger log = LoggerFactory.getLogger(VaultService.class);
 
     private final String vaultPath;
-    private final Path inboxDir;
+    private final Path todayDir;
+    private final Path backlogDir;
+    private final Path waitingDir;
     private final Path somedayDir;
     private final Path resourcesDir;
+    private final Path doneDir;
+    private final Path discardDir;
+    private final Path legacyInboxDir;
+    private final List<Path> allDirs;
     private final Path archiveDuplicatesDir;
-    private final UndoStack undoStack;
+    private final EventLog eventLog;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
@@ -37,32 +43,38 @@ public class VaultService {
 
     public VaultService(
             @Value("${gtd.vault.path}") String vaultPath,
-            UndoStack undoStack,
+            EventLog eventLog,
             @Value("${gtd.vault.migrate-today-since:true}") boolean migrateTodaySinceEnabled,
             @Value("${gtd.vault.migrate-timestamps:true}") boolean migrateTimestampsEnabled,
             @Value("${gtd.vault.migrate-bucket-mismatch:true}") boolean migrateBucketMismatchEnabled,
-            @Value("${gtd.vault.migrate-delegado-list:true}") boolean migrateDelegadoListEnabled) {
-        this.vaultPath    = vaultPath;
-        this.inboxDir     = Path.of(vaultPath, "brain/inbox");
-        this.somedayDir   = Path.of(vaultPath, "brain/someday");
-        this.resourcesDir = Path.of(vaultPath, "brain/resources");
+            @Value("${gtd.vault.migrate-delegado-list:true}") boolean migrateDelegadoListEnabled,
+            @Value("${gtd.vault.migrate-folder-split:true}") boolean migrateFolderSplitEnabled) {
+        this.vaultPath      = vaultPath;
+        this.todayDir       = Path.of(vaultPath, "brain/today");
+        this.backlogDir     = Path.of(vaultPath, "brain/backlog");
+        this.waitingDir     = Path.of(vaultPath, "brain/waiting");
+        this.somedayDir     = Path.of(vaultPath, "brain/someday");
+        this.resourcesDir   = Path.of(vaultPath, "brain/resources");
+        this.doneDir        = Path.of(vaultPath, "brain/done");
+        this.discardDir     = Path.of(vaultPath, "brain/discard");
+        this.legacyInboxDir = Path.of(vaultPath, "brain/inbox");
+        this.allDirs = List.of(todayDir, backlogDir, waitingDir, somedayDir, resourcesDir, doneDir, discardDir);
         this.archiveDuplicatesDir = Path.of(vaultPath, "brain/.archive/duplicates");
-        this.undoStack = undoStack;
+        this.eventLog = eventLog;
         try {
-            Files.createDirectories(inboxDir);
-            Files.createDirectories(somedayDir);
-            Files.createDirectories(resourcesDir);
+            for (Path dir : allDirs) Files.createDirectories(dir);
             Files.createDirectories(archiveDuplicatesDir);
         } catch (IOException e) {
             log.error("Could not create vault directories: {}", e.getMessage());
         }
+        if (migrateFolderSplitEnabled) migrateFolderSplit();
         if (migrateTodaySinceEnabled) migrateTodaySince();
         if (migrateTimestampsEnabled) migrateTimestamps();
         if (migrateBucketMismatchEnabled) migrateBucketMismatch();
         if (migrateDelegadoListEnabled) migrateDelegadoToList();
     }
 
-    public String write(Map<String, Object> item) {
+    public String write(Map<String, Object> item, Actor actor) {
         String bucket = (String) item.get("bucket");
         Path dir = dirFor(bucket);
 
@@ -94,8 +106,8 @@ public class VaultService {
 
         try {
             Files.writeString(dest, content);
-            // undo: previousContent null = delete on undo
-            undoStack.push(new UndoStack.UndoEntry(filename, dest, null));
+            eventLog.append(Event.mutation(actor, "create", filename, String.valueOf(frontmatter.get("title")),
+                null, dest.toString(), null, "none", null));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -156,32 +168,72 @@ public class VaultService {
         return counts;
     }
 
-    public void markDone(String filename) {
-        mutate(filename, item -> item.put("status", "done"));
+    public void markDone(String filename, Actor actor) {
+        mutate(filename, doneDir, actor, "done", item -> {
+            item.put("status", "done");
+            item.putIfAbsent("done_date", LocalDate.now().toString());
+        });
     }
 
-    public void dismissItem(String filename) {
-        mutate(filename, item -> item.put("status", "dismissed"));
+    public void dismissItem(String filename, Actor actor) {
+        dismissItem(filename, actor, "none", null);
     }
 
-    public void appendToTask(String filename, String append) {
-        mutate(filename, item -> {
+    /** Used by POST /api/chat/confirm to record that this dismiss was an LLM proposal the user approved, linked back to the chat message that proposed it. */
+    public void dismissItem(String filename, Actor actor, String confirmation, String chatRef) {
+        mutate(filename, discardDir, actor, "dismiss", confirmation, chatRef, item -> {
+            item.put("status", "dismissed");
+            item.putIfAbsent("discarded_date", LocalDate.now().toString());
+        });
+    }
+
+    public void appendToTask(String filename, String append, Actor actor) {
+        mutate(filename, actor, "update", item -> {
             String body = (String) item.remove("body");
             String newBody = (body == null || body.isBlank()) ? append : body + "\n" + append;
             item.put("_body_override", newBody);
         });
     }
 
-    public void replaceBody(String filename, String newBody) {
-        mutate(filename, item -> item.put("_body_override", newBody));
+    public void replaceBody(String filename, String newBody, Actor actor) {
+        replaceBody(filename, newBody, actor, "none", null);
     }
 
-    public void patchMeta(String filename, Map<String, Object> meta) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes");
-        mutate(filename, item -> meta.forEach((k, v) -> {
+    /** Used by POST /api/chat/confirm to record that this edit/update was an LLM proposal the user approved, linked back to the chat message that proposed it. */
+    public void replaceBody(String filename, String newBody, Actor actor, String confirmation, String chatRef) {
+        mutate(filename, actor, "edit", confirmation, chatRef, item -> item.put("_body_override", newBody));
+    }
+
+    public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed");
+        mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             item.put(k, "delegado_a".equals(k) ? delegadoAsList(v) : v);
         }));
+    }
+
+    /**
+     * Inverts a mutation event: no previousContent means it was a create (undo = delete);
+     * otherwise moves the file back from path_after to path_before (if they differ — covers
+     * move/done/dismiss) and restores previous_content. This single path-based rule replaces the
+     * old op-specific undo logic and, as a side effect, fixes the historical bug where undoing a
+     * move restored content at the old path but left the moved-to copy behind as a duplicate.
+     */
+    public synchronized void undoEvent(Event e) {
+        try {
+            Path after = e.pathAfter() != null ? Path.of(e.pathAfter()) : null;
+            if (e.previousContent() == null) {
+                if (after != null) Files.deleteIfExists(after);
+                return;
+            }
+            Path before = Path.of(e.pathBefore());
+            if (after != null && !after.equals(before)) {
+                moveAtomically(after, before);
+            }
+            Files.writeString(before, e.previousContent());
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
     }
 
     public Map<String, Object> read(String filename) {
@@ -248,12 +300,11 @@ public class VaultService {
     public List<Map<String, Object>> listCompletedSince(int days) {
         LocalDate cutoff = LocalDate.now().minusDays(days);
         List<Map<String, Object>> all = new ArrayList<>();
-        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+        for (Path dir : List.of(doneDir, discardDir)) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md"))
                      .map(this::readFile)
                      .filter(Objects::nonNull)
-                     .filter(m -> INACTIVE_STATUSES.contains(String.valueOf(m.getOrDefault("status", ""))))
                      .filter(m -> {
                          String updated = String.valueOf(m.getOrDefault("updated", m.getOrDefault("created", "")));
                          try { return !LocalDate.parse(updated).isBefore(cutoff); }
@@ -271,12 +322,11 @@ public class VaultService {
 
     public List<Map<String, Object>> history(int limit) {
         List<Map<String, Object>> all = new ArrayList<>();
-        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+        for (Path dir : List.of(doneDir, discardDir)) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md"))
                      .map(this::readFile)
                      .filter(Objects::nonNull)
-                     .filter(m -> INACTIVE_STATUSES.contains(String.valueOf(m.getOrDefault("status", ""))))
                      .forEach(all::add);
             } catch (IOException e) { /* empty directory, skip */ }
         }
@@ -287,14 +337,8 @@ public class VaultService {
         return limit > 0 ? all.subList(0, Math.min(limit, all.size())) : all;
     }
 
-    public synchronized void moveBucket(String filename, String newBucket, String due) {
-        Path file = resolveFile(filename);
-        try {
-            String previousContent = Files.readString(file);
-            undoStack.push(new UndoStack.UndoEntry(filename, file, previousContent));
-
-            Map<String, Object> item = MarkdownSerializer.parse(previousContent, filename);
-            String body = (String) item.remove("body");
+    public void moveBucket(String filename, String newBucket, String due, Actor actor) {
+        mutate(filename, dirFor(newBucket), actor, "move", item -> {
             item.put("bucket", newBucket);
             if (due != null && !due.isBlank()) item.put("due", due);
             if ("reference".equals(newBucket)) {
@@ -308,26 +352,7 @@ public class VaultService {
             if ("today".equals(newBucket) && !item.containsKey("today_since")) {
                 item.put("today_since", LocalDate.now().toString());
             }
-            item.put("updated", LocalDate.now().toString());
-            String newContent = MarkdownSerializer.serialize(item, body);
-
-            Path newDir = dirFor(newBucket);
-            if (!isInOwnDir(file, newBucket)) {
-                Path dest = newDir.resolve(file.getFileName());
-                try {
-                    moveAtomically(file, dest);
-                } catch (IOException e) {
-                    log.error("moveBucket: atomic move failed for {} ({} -> {}), file untouched at origin: {}",
-                        filename, file.getParent(), newDir, e.getMessage());
-                    throw e;
-                }
-                Files.writeString(dest, newContent);
-            } else {
-                Files.writeString(file, newContent);
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        });
     }
 
     public void logDiscard(String message, List<Map<String, Object>> ops) {
@@ -352,15 +377,79 @@ public class VaultService {
 
     private Path dirFor(String bucket) {
         return switch (bucket) {
-            case "reference" -> resourcesDir;
+            case "today"     -> todayDir;
+            case "backlog"   -> backlogDir;
+            case "waiting"   -> waitingDir;
             case "someday"   -> somedayDir;
-            default          -> inboxDir;
+            case "reference" -> resourcesDir;
+            default -> throw new IllegalArgumentException("Unknown bucket: " + bucket);
         };
+    }
+
+    /**
+     * One-time move of files out of the legacy shared brain/inbox/ (and any done/dismissed
+     * items sitting in brain/someday|resources/) into the 7 bucket-dedicated folders. Idempotent:
+     * once a file has moved, later restarts find nothing left to do for it. Non-GTD notes
+     * (no "bucket" key, e.g. _index.md) are left untouched.
+     */
+    private void migrateFolderSplit() {
+        List<Path> legacyActiveDirs = new ArrayList<>();
+        if (Files.isDirectory(legacyInboxDir)) legacyActiveDirs.add(legacyInboxDir);
+        legacyActiveDirs.add(somedayDir);
+        legacyActiveDirs.add(resourcesDir);
+
+        for (Path dir : legacyActiveDirs) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md"))
+                     .forEach(p -> migrateFileToBucketDir(dir, p));
+            } catch (IOException e) {
+                log.warn("migrateFolderSplit: could not list {}: {}", dir, e.getMessage());
+            }
+        }
+    }
+
+    private void migrateFileToBucketDir(Path sourceDir, Path p) {
+        try {
+            String content = Files.readString(p);
+            Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
+            if (item.get("bucket") == null) return; // non-GTD note, leave in place
+
+            String status = String.valueOf(item.getOrDefault("status", ""));
+            Path targetDir;
+            if ("done".equals(status)) {
+                targetDir = doneDir;
+                item.putIfAbsent("done_date", bestEffortCompletionDate(item));
+            } else if ("dismissed".equals(status)) {
+                targetDir = discardDir;
+                item.putIfAbsent("discarded_date", bestEffortCompletionDate(item));
+            } else if (sourceDir.equals(legacyInboxDir)) {
+                targetDir = dirFor(String.valueOf(item.get("bucket")));
+            } else {
+                return; // open someday/resources item already lives in the right place
+            }
+
+            Path dest = targetDir.resolve(p.getFileName());
+            if (dest.equals(p)) return;
+            String body = (String) item.remove("body");
+            moveAtomically(p, dest);
+            Files.writeString(dest, MarkdownSerializer.serialize(item, body));
+            log.info("migrateFolderSplit: moved {} -> {}", p.getFileName(), targetDir);
+        } catch (Exception e) {
+            log.warn("migrateFolderSplit: skipping {}: {}", p.getFileName(), e.getMessage());
+        }
+    }
+
+    /** Best available approximation for a retroactive done_date/discarded_date: not exact for items archived before this migration. */
+    private static String bestEffortCompletionDate(Map<String, Object> item) {
+        Object updated = item.get("updated");
+        if (updated != null) return String.valueOf(updated);
+        Object created = item.get("created");
+        return created != null ? String.valueOf(created) : LocalDate.now().toString();
     }
 
     /** Rewrites legacy scalar delegado_a ("Juan") as a single-element list (["Juan"]) on disk. */
     private void migrateDelegadoToList() {
-        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+        for (Path dir : allDirs) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
                     try {
@@ -382,7 +471,7 @@ public class VaultService {
     }
 
     private void migrateTodaySince() {
-        for (Path dir : List.of(inboxDir, somedayDir)) {
+        for (Path dir : List.of(todayDir)) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
                     try {
@@ -408,20 +497,21 @@ public class VaultService {
 
     /**
      * Self-heals filename duplicates and misplaced files left behind by moveBucket() failures.
-     * Duplicate: same filename in more than one of inboxDir/somedayDir/resourcesDir — keep the
+     * Duplicate: same filename in more than one of the 7 bucket directories — keep the
      * copy whose bucket matches the directory it's in, breaking ties (or mismatch-both) by most
      * recent "updated"; quarantine the other (see quarantineDuplicate — never deleted outright).
      * Misplaced-no-duplicate: single copy sitting in a directory that doesn't match its own
      * bucket field — relocate it.
      *
-     * Only touches files that actually have a "bucket" key — brain/inbox and brain/someday also
-     * hold non-GTD notes (meta index pages, freeform ideas/someday-maybe entries with their own
-     * type/status schema) that were never written by VaultService and must not be moved or
-     * treated as duplicates just because the same filename convention happens to collide.
+     * Only touches files that actually have a "bucket" key — brain/someday (and legacy
+     * brain/inbox, while it still has content) also hold non-GTD notes (meta index pages,
+     * freeform ideas/someday-maybe entries with their own type/status schema) that were never
+     * written by VaultService and must not be moved or treated as duplicates just because the
+     * same filename convention happens to collide.
      */
     private void migrateBucketMismatch() {
         Map<String, List<Map.Entry<Path, Map<String, Object>>>> byFilename = new LinkedHashMap<>();
-        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+        for (Path dir : allDirs) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
                     Map<String, Object> item = readFile(p);
@@ -443,13 +533,21 @@ public class VaultService {
         }
     }
 
-    private boolean isInOwnDir(Path path, String bucket) {
-        return path.getParent().equals(dirFor(bucket));
+    /** Directory a file should live in given its status/bucket — done/dismissed always win over bucket, which is kept only for historical reference. */
+    private Path expectedDirFor(Map<String, Object> item) {
+        String status = String.valueOf(item.getOrDefault("status", ""));
+        if ("done".equals(status)) return doneDir;
+        if ("dismissed".equals(status)) return discardDir;
+        return dirFor(String.valueOf(item.get("bucket")));
+    }
+
+    private boolean isInOwnDir(Path path, Map<String, Object> item) {
+        return path.getParent().equals(expectedDirFor(item));
     }
 
     private void resolveDuplicate(List<Map.Entry<Path, Map<String, Object>>> entries) {
         Comparator<Map.Entry<Path, Map<String, Object>>> byOwnDirMatch = Comparator.comparing(e ->
-            isInOwnDir(e.getKey(), String.valueOf(e.getValue().getOrDefault("bucket", ""))));
+            isInOwnDir(e.getKey(), e.getValue()));
         Map.Entry<Path, Map<String, Object>> keep = entries.stream()
             .max(byOwnDirMatch.thenComparing(e -> String.valueOf(e.getValue().getOrDefault("updated", e.getValue().getOrDefault("created", "")))))
             .orElseThrow();
@@ -490,13 +588,13 @@ public class VaultService {
 
     private void relocateIfMismatched(Map.Entry<Path, Map<String, Object>> entry) {
         Path path = entry.getKey();
-        String bucket = String.valueOf(entry.getValue().getOrDefault("bucket", ""));
-        if (isInOwnDir(path, bucket)) return;
-        Path correctDir = dirFor(bucket);
+        Map<String, Object> item = entry.getValue();
+        if (isInOwnDir(path, item)) return;
+        Path correctDir = expectedDirFor(item);
         Path dest = correctDir.resolve(path.getFileName());
         try {
             moveAtomically(path, dest);
-            log.info("migrateBucketMismatch: relocated {} to {} (bucket: {})", path.getFileName(), correctDir, bucket);
+            log.info("migrateBucketMismatch: relocated {} to {} (bucket: {})", path.getFileName(), correctDir, item.get("bucket"));
         } catch (IOException e) {
             log.warn("migrateBucketMismatch: could not relocate {}: {}", path, e.getMessage());
         }
@@ -514,11 +612,33 @@ public class VaultService {
         Files.move(src, dest, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
     }
 
-    private synchronized void mutate(String filename, java.util.function.Consumer<Map<String, Object>> modifier) {
+    /** In-place mutation: rewrites the file without moving it (target dir = its current parent). */
+    private void mutate(String filename, Actor actor, String op, java.util.function.Consumer<Map<String, Object>> modifier) {
+        mutate(filename, actor, op, "none", null, modifier);
+    }
+
+    private void mutate(String filename, Actor actor, String op, String confirmation, String chatRef, java.util.function.Consumer<Map<String, Object>> modifier) {
+        Path file = resolveFile(filename);
+        mutate(filename, file.getParent(), actor, op, confirmation, chatRef, modifier);
+    }
+
+    private void mutate(String filename, Path targetDir, Actor actor, String op, java.util.function.Consumer<Map<String, Object>> modifier) {
+        mutate(filename, targetDir, actor, op, "none", null, modifier);
+    }
+
+    /**
+     * Mutates a file's frontmatter/body and, if targetDir differs from its current directory,
+     * moves it there atomically first. With one folder per bucket, every bucket transition
+     * (today/backlog/waiting/someday/reference) and every done/discard is a move — there is no
+     * special "already in the right place" branch to maintain, path equality covers it.
+     *
+     * The event is appended only after the write succeeds — unlike the old UndoStack, which
+     * pushed before writing and could leave a phantom undo entry if the write failed.
+     */
+    private synchronized void mutate(String filename, Path targetDir, Actor actor, String op, String confirmation, String chatRef, java.util.function.Consumer<Map<String, Object>> modifier) {
         Path file = resolveFile(filename);
         try {
             String previousContent = Files.readString(file);
-            undoStack.push(new UndoStack.UndoEntry(filename, file, previousContent));
 
             Map<String, Object> item = MarkdownSerializer.parse(previousContent, filename);
             String body = (String) item.remove("body");
@@ -529,7 +649,23 @@ public class VaultService {
             if (newBody == null) newBody = body;
 
             item.put("updated", LocalDate.now().toString());
-            Files.writeString(file, MarkdownSerializer.serialize(item, newBody));
+            String newContent = MarkdownSerializer.serialize(item, newBody);
+
+            Path dest = targetDir.resolve(file.getFileName());
+            if (!file.equals(dest)) {
+                try {
+                    moveAtomically(file, dest);
+                } catch (IOException e) {
+                    log.error("mutate: atomic move failed for {} ({} -> {}), file untouched at origin: {}",
+                        filename, file.getParent(), targetDir, e.getMessage());
+                    throw e;
+                }
+                Files.writeString(dest, newContent);
+            } else {
+                Files.writeString(file, newContent);
+            }
+            eventLog.append(Event.mutation(actor, op, filename, String.valueOf(item.get("title")),
+                file.toString(), dest.toString(), previousContent, confirmation, chatRef));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -539,7 +675,7 @@ public class VaultService {
         if (!filename.matches("[\\w.\\-]+\\.md")) {
             throw new IllegalArgumentException("Invalid filename: " + filename);
         }
-        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+        for (Path dir : allDirs) {
             Path p = dir.resolve(filename);
             if (Files.exists(p)) return p;
         }
@@ -592,7 +728,7 @@ public class VaultService {
 
     private void migrateTimestamps() {
         java.util.regex.Pattern TS_IN_YAML = java.util.regex.Pattern.compile("\\d{4}-\\d{2}-\\d{2}T");
-        for (Path dir : List.of(inboxDir, somedayDir, resourcesDir)) {
+        for (Path dir : allDirs) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
                     try {

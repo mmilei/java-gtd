@@ -1,14 +1,21 @@
 package ar.maxi.gtd.api;
 
+import ar.maxi.gtd.service.Actor;
+import ar.maxi.gtd.service.ChatMessage;
 import ar.maxi.gtd.service.ClassifierService;
 import ar.maxi.gtd.service.ClassifierService.ClassifyResult;
+import ar.maxi.gtd.service.EventLog;
+import ar.maxi.gtd.service.TranscriptLog;
 import ar.maxi.gtd.service.VaultService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api")
@@ -16,10 +23,15 @@ public class ChatController {
 
     private final ClassifierService classifier;
     private final VaultService vault;
+    private final TranscriptLog transcript;
+    private final EventLog eventLog;
+    private final ObjectMapper mapper = new ObjectMapper();
 
-    public ChatController(ClassifierService classifier, VaultService vault) {
+    public ChatController(ClassifierService classifier, VaultService vault, TranscriptLog transcript, EventLog eventLog) {
         this.classifier = classifier;
         this.vault = vault;
+        this.transcript = transcript;
+        this.eventLog = eventLog;
     }
 
     @PostMapping("/chat")
@@ -30,6 +42,7 @@ public class ChatController {
                 new ChatResponse(false, List.of(Map.of("error", "message is required")))
             );
         }
+        transcript.append("user", message, false);
 
         List<Map<String, Object>> openTasks = vault.listAllFlat();
         ClassifyResult result = classifier.classifyAll(message, openTasks);
@@ -39,7 +52,7 @@ public class ChatController {
         List<Map<String, Object>> discardedOps = new ArrayList<>();
 
         for (Map<String, Object> op : ops) {
-            Map<String, Object> dispatched = dispatch(op);
+            Map<String, Object> dispatched = dispatch(op, result.usedFallback());
             results.add(dispatched);
 
             String bucket = (String) op.get("bucket");
@@ -52,14 +65,101 @@ public class ChatController {
             vault.logDiscard(message, discardedOps);
         }
 
-        return ResponseEntity.ok(new ChatResponse(result.usedFallback(), results));
+        // the assistant transcript entry is appended after dispatch so its id can be attached,
+        // as chat_ref, to any op still waiting on POST /api/chat/confirm
+        ChatMessage assistantMsg = transcript.append("assistant", serializeOps(results), result.usedFallback());
+        List<Map<String, Object>> withChatRef = results.stream().map(r -> {
+            if (!Boolean.TRUE.equals(r.get("requires_confirmation"))) return r;
+            Map<String, Object> withRef = new LinkedHashMap<>(r);
+            withRef.put("chat_ref", assistantMsg.id());
+            return withRef;
+        }).collect(Collectors.toList());
+
+        return ResponseEntity.ok(new ChatResponse(result.usedFallback(), withChatRef));
     }
 
-    private Map<String, Object> dispatch(Map<String, Object> op) {
+    /**
+     * Approves an LLM-proposed edit/update/dismiss that came back from /api/chat with
+     * requires_confirmation=true. Distinct from the generic PUT /body and POST /dismiss endpoints
+     * (which BucketController exposes for direct user edits) so the event log can tell "user typed
+     * this by hand" apart from "user approved what the LLM proposed" — see decision 7 of the
+     * historial/undo/confirmed plan.
+     */
+    @PostMapping("/chat/confirm")
+    public ResponseEntity<Map<String, Object>> confirm(@RequestBody Map<String, String> body) {
+        String targetFile = body.get("target_file");
+        String op = body.get("op");
+        String chatRef = body.get("chat_ref");
+        if (targetFile == null || op == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "target_file and op are required"));
+        }
+        try {
+            switch (op) {
+                case "edit", "update" -> vault.replaceBody(targetFile, body.getOrDefault("proposed_body", ""), Actor.LLM, "confirmed", chatRef);
+                case "dismiss" -> vault.dismissItem(targetFile, Actor.LLM, "confirmed", chatRef);
+                default -> {
+                    return ResponseEntity.badRequest().body(Map.of("error", "unsupported op for confirm: " + op));
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(Map.of("confirmed", true, "file", targetFile, "op", op));
+    }
+
+    /** Raw transcript, interleaved with whether each pending requires_confirmation op has since been resolved — lets the frontend rehydrate cards on page reload. */
+    @GetMapping("/chat/history")
+    public List<Map<String, Object>> history(@RequestParam(defaultValue = "50") int limit) {
+        return transcript.tail(limit).stream().map(this::toHistoryEntry).collect(Collectors.toList());
+    }
+
+    private Map<String, Object> toHistoryEntry(ChatMessage m) {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("id", m.id());
+        entry.put("ts", m.ts());
+        entry.put("role", m.role());
+        if (!"assistant".equals(m.role())) {
+            entry.put("text", m.text());
+            return entry;
+        }
+        entry.put("fallback", m.fallback());
+        entry.put("ops", deserializeOpsWithResolution(m));
+        return entry;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> deserializeOpsWithResolution(ChatMessage assistantMsg) {
+        List<Map<String, Object>> ops;
+        try {
+            ops = mapper.readValue(assistantMsg.text(), List.class);
+        } catch (Exception e) {
+            return List.of();
+        }
+        for (Map<String, Object> op : ops) {
+            if (!Boolean.TRUE.equals(op.get("requires_confirmation"))) continue;
+            String targetFile = (String) op.get("target_file");
+            boolean resolved = eventLog.tail(0, null, null).stream()
+                .anyMatch(e -> "confirmed".equals(e.confirmation())
+                    && assistantMsg.id().equals(e.chatRef())
+                    && targetFile != null && targetFile.equals(e.file()));
+            op.put("resolved", resolved);
+        }
+        return ops;
+    }
+
+    private String serializeOps(List<Map<String, Object>> ops) {
+        try {
+            return mapper.writeValueAsString(ops);
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
+    private Map<String, Object> dispatch(Map<String, Object> op, boolean usedFallback) {
         String opType = (String) op.get("op");
         try {
             return switch (opType) {
-                case "create" -> handleCreate(op);
+                case "create" -> handleCreate(op, usedFallback);
                 case "done"   -> handleDone(op);
                 case "update" -> handleUpdate(op);
                 case "move"   -> handleMove(op);
@@ -73,7 +173,7 @@ public class ChatController {
         }
     }
 
-    private Map<String, Object> handleCreate(Map<String, Object> op) {
+    private Map<String, Object> handleCreate(Map<String, Object> op, boolean usedFallback) {
         String bucket = (String) op.get("bucket");
         String title  = op.get("title") != null ? (String) op.get("title") : "";
         if ("now".equals(bucket) || "discard".equals(bucket)) {
@@ -85,13 +185,24 @@ public class ChatController {
                 "message", op.getOrDefault("message", "No archivado.")
             );
         }
-        String filename = vault.write(op);
+        // usedFallback is a proxy for low classifier confidence, not LLM self-assessment (which
+        // tends to always claim certainty) — confirmed:false queues the task for later review
+        // instead of blocking or silently trusting a shaky classification. Copy rather than
+        // mutate op in place: it may be an immutable Map (Jackson-deserialized ops are mutable,
+        // but callers/tests aren't guaranteed to hand us one).
+        Map<String, Object> toWrite = op;
+        if (usedFallback) {
+            toWrite = new java.util.LinkedHashMap<>(op);
+            toWrite.put("confirmed", false);
+        }
+        String filename = vault.write(toWrite, Actor.LLM);
         return Map.of(
             "op", "create",
             "filed", true,
             "bucket", bucket,
             "file", filename,
-            "title", title
+            "title", title,
+            "confirmed", !usedFallback
         );
     }
 
@@ -101,7 +212,7 @@ public class ChatController {
             return Map.of("op", "done", "filed", false, "error", "no match found");
         }
         Map<String, Object> current = vault.read(targetFile);
-        vault.markDone(targetFile);
+        vault.markDone(targetFile, Actor.LLM);
         return Map.of(
             "op", "done",
             "filed", true,
@@ -151,7 +262,7 @@ public class ChatController {
         String newBucket = (String) op.get("new_bucket");
         String due = (String) op.get("due");
         Map<String, Object> current = vault.read(targetFile);
-        vault.moveBucket(targetFile, newBucket, due);
+        vault.moveBucket(targetFile, newBucket, due, Actor.LLM);
         return Map.of(
             "op", "move",
             "filed", true,
@@ -170,7 +281,7 @@ public class ChatController {
         if (op.containsKey("tags"))        meta.put("tags", op.get("tags"));
         if (op.containsKey("due"))         meta.put("due", op.get("due"));
         if (op.containsKey("today_since")) meta.put("today_since", op.get("today_since"));
-        vault.patchMeta(targetFile, meta);
+        vault.patchMeta(targetFile, meta, Actor.LLM);
         return Map.of("op", "patch", "filed", true, "file", targetFile);
     }
 

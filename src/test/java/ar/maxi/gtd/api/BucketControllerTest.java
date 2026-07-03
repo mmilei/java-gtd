@@ -1,5 +1,6 @@
 package ar.maxi.gtd.api;
 
+import ar.maxi.gtd.service.Actor;
 import ar.maxi.gtd.service.MarkdownifyService;
 import ar.maxi.gtd.service.VaultService;
 import org.junit.jupiter.api.BeforeEach;
@@ -82,7 +83,15 @@ class BucketControllerTest {
         mvc.perform(post("/api/items/" + FILE + "/done"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.done").value(true));
-        verify(vault).markDone(FILE);
+        verify(vault).markDone(FILE, Actor.USER);
+    }
+
+    @Test
+    void confirmItem() throws Exception {
+        mvc.perform(post("/api/items/" + FILE + "/confirm"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.confirmed").value(true));
+        verify(vault).patchMeta(FILE, Map.of("confirmed", true), Actor.USER);
     }
 
     @Test
@@ -90,7 +99,7 @@ class BucketControllerTest {
         mvc.perform(post("/api/items/" + FILE + "/dismiss"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dismissed").value(true));
-        verify(vault).dismissItem(FILE);
+        verify(vault).dismissItem(FILE, Actor.USER);
     }
 
     @Test
@@ -100,7 +109,7 @@ class BucketControllerTest {
                         .content("{\"body\":\"nuevo contenido\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.updated").value(true));
-        verify(vault).replaceBody(eq(FILE), eq("nuevo contenido"));
+        verify(vault).replaceBody(eq(FILE), eq("nuevo contenido"), eq(Actor.USER));
     }
 
     @Test
@@ -118,7 +127,7 @@ class BucketControllerTest {
                         .content("{\"bucket\":\"backlog\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.moved").value(true));
-        verify(vault).moveBucket(eq(FILE), eq("backlog"), isNull());
+        verify(vault).moveBucket(eq(FILE), eq("backlog"), isNull(), eq(Actor.USER));
     }
 
     @Test

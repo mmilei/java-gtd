@@ -29,7 +29,7 @@ All settings live in `application.properties` and can be overridden per-machine 
 | `classifier.template` | `sample` | Prompt pair: `sample` (public, English) or `custom` (gitignored, personal) |
 | `ollama.enabled` | off | Set `true` to register the local Ollama provider |
 | `spring.ai.ollama.base-url` | `http://localhost:11434` | Ollama server |
-| `gtd.vault.migrate-*` | `true` | Startup self-healing migrations on the vault (today_since, timestamps, bucket mismatches, delegado list) |
+| `gtd.vault.migrate-*` | `true` | Startup self-healing migrations on the vault (today_since, timestamps, bucket mismatches, delegado list, one-time folder-per-bucket split) |
 
 Example `application-local.properties`:
 
@@ -64,16 +64,25 @@ curl -X POST http://localhost:8080/api/providers/select -H "Content-Type: applic
 
 ## Vault layout
 
-The API creates these folders on startup if missing:
+The API creates these folders on startup if missing — one directory per bucket/state, no shared inbox:
 
 ```
 <vault>/
-  brain/inbox/       today · backlog · waiting actions
+  brain/today/       today actions
+  brain/backlog/     backlog actions
+  brain/waiting/     delegated, waiting on someone
   brain/someday/     someday/maybe items
   brain/resources/   reference material
+  brain/done/        completed actions (done_date set once)
+  brain/discard/     dismissed actions (discarded_date set once)
   .vault-meta/
-    discard-log.jsonl   append-only log of discarded ops
+    events.jsonl        durable, append-only mutation log (undo, GET /api/events)
+    transcript.jsonl     durable, append-only raw chat log (GET /api/chat/history)
+    discard-log.jsonl    append-only log of discarded ops (from chat, before filing)
+    archive/             rotated-out events/transcript lines, never deleted
 ```
+
+The first startup against an existing `brain/inbox/` vault (pre-2026-07 layout) runs a one-time migration (`gtd.vault.migrate-folder-split`) that relocates every file into the folder matching its `bucket`/`status`; anything without a `bucket` field (non-GTD notes) is left untouched.
 
 Notes are plain Markdown with YAML frontmatter — readable and editable from Obsidian or any editor while the API runs.
 
@@ -83,4 +92,4 @@ Notes are plain Markdown with YAML frontmatter — readable and editable from Ob
 mvn test
 ```
 
-70 tests across controller suites (`@WebMvcTest` with mocked services) and `VaultServiceTest` (real filesystem I/O via `@TempDir`).
+98 tests across controller suites (`@WebMvcTest` with mocked services), `VaultServiceTest` (real filesystem I/O via `@TempDir`), and `EventLogTest` (append-only log semantics).
