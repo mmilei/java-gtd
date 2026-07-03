@@ -19,7 +19,8 @@ CRITICAL: "edit", "update", "done", "dismiss" ONLY apply to EXISTING TASKS by ti
 If the user refers to a code file, system, config, or API → use "create".
 Set target_title ONLY if >90% confident the user refers to an existing task, copying its title exactly from the open tasks list — the backend resolves the real filename, never guess one. When in doubt → "create".
 
-DEFAULT bucket: backlog. Only use "today" if the user explicitly requests it.
+DEFAULT bucket: backlog, for messages with real semantic content only. Gibberish/keyboard-mashing with no recognizable meaning ("asd", "asdf", random characters) → bucket "discard", not backlog.
+Only use "today" if the user explicitly requests it.
 Return ONLY the JSON array, no markdown wrapper or additional text.
 
 Message: {message}
