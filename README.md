@@ -41,7 +41,7 @@ Inspired by [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_D
 - **Second-brain native** — every task lands as frontmattered Markdown in your Obsidian vault: portable, greppable, versionable, no database. Ready for an LLM-maintained knowledge base in the style of Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — this API is the capture layer, your vault is the brain.
 - **Multi-provider LLM** — Groq (Llama 3.3-70b) or a local Ollama model, switchable at runtime via API. Cloud-quality or fully offline.
 - **Conversational task management** — create, edit, move, complete, and dismiss tasks in plain language; multi-operation messages supported.
-- **Confirmation & undo** — body edits and dismissals require explicit confirmation; every mutation is undoable (`POST /api/undo`).
+- **Confirmation & durable undo** — body edits and dismissals require explicit confirmation, tracked separately from direct edits so the audit trail knows who approved what; every mutation is undoable (`POST /api/undo`) via a durable, append-only event log that survives a restart.
 - **Time estimates** — the classifier infers `estimate_minutes` so the frontend can project when your day ends.
 - **Voice input** — audio transcription endpoint feeding the same pipeline.
 
@@ -54,7 +54,7 @@ Inspired by [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_D
 | AI integration | Spring AI + OpenAI-compatible APIs |
 | LLM providers | Groq (Llama 3.3-70b) · Ollama (local) |
 | Storage | Obsidian vault (Markdown + YAML frontmatter) |
-| Tests | JUnit 5 · Mockito — 70 tests |
+| Tests | JUnit 5 · Mockito — 98 tests |
 
 ## Quick start
 
@@ -71,8 +71,8 @@ Requires Java 21+ and Maven 3.9+. Full configuration options (local properties, 
 
 | Doc | Contents |
 |-----|----------|
-| [docs/api.md](docs/api.md) | Full REST API reference — 19 endpoints |
-| [docs/architecture.md](docs/architecture.md) | Services, classification pipeline, GTD buckets, undo stack, vault layout |
+| [docs/api.md](docs/api.md) | Full REST API reference — 24 endpoints |
+| [docs/architecture.md](docs/architecture.md) | Services, classification pipeline, GTD buckets, event log & undo, vault layout |
 | [docs/setup.md](docs/setup.md) | Configuration, prompt templates, provider switching |
 
 ## Why Java + Spring AI?

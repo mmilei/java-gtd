@@ -36,34 +36,57 @@ POST /api/chat  ("call the dentist tomorrow morning")
 |---------|---------------|
 | `ClassifierService` | Two-level prompting, JSON parsing, target-file resolution for follow-up ops |
 | `LlmProviderService` | Runtime provider switching (Groq/Ollama), availability checks |
-| `VaultService` | All vault I/O: create, mutate, move between buckets, startup self-healing migrations |
+| `VaultService` | All vault I/O: create, mutate, move between buckets, startup self-healing migrations, undo |
+| `EventLog` | Durable, append-only mutation log (`.vault-meta/events.jsonl`) — backs undo and the history/events API |
+| `TranscriptLog` | Durable, append-only raw chat log (`.vault-meta/transcript.jsonl`) — backs `GET /api/chat/history` |
 | `MarkdownifyService` | AI enrichment of a note (rewrites body, infers tags) |
-| `UndoStack` | Thread-safe `Deque` of pre-mutation snapshots, cap 10 |
 | `MarkdownSerializer` | YAML frontmatter ↔ map, resilient to malformed YAML |
 
 ## Key design decisions
 
 - **Two-level prompting** — a cheap prompt handles easy inputs; the detailed fallback runs only on parse failure or suspicious output. Cuts latency and cost on the common path. The response flags `fallback: true` when level 2 ran.
 - **Deterministic target resolution** — the LLM identifies which existing task a follow-up refers to *by title*; the backend resolves the actual filename with accent-insensitive matching. The LLM never invents filenames.
-- **Confirmation for destructive ops** — `edit`, `update`, and `dismiss` return `requires_confirmation: true` with a current/proposed body diff instead of mutating immediately; the client confirms via the regular REST endpoints.
-- **Undo everywhere** — every mutation pushes a snapshot (`filename`, path, previous content) to an in-memory stack; `POST /api/undo` restores the last one. Resets on restart.
+- **Confirmation for destructive ops** — `edit`, `update`, and `dismiss` return `requires_confirmation: true` with a current/proposed body diff and a `chat_ref`; the client approves via `POST /api/chat/confirm`, which records the approval as `actor: llm` in the event log, distinct from a human editing the same task directly.
+- **Durable, restart-safe undo** — every mutation appends an event to `.vault-meta/events.jsonl` *after* its write succeeds (not before, avoiding a phantom entry if the write fails). `POST /api/undo` inverts the most recent not-yet-undone one by moving the file back from its post-mutation path to its pre-mutation path (if they differ) and restoring `previous_content` — one rule for create/edit/move/done/dismiss alike. Undo depth 50, survives a restart because nothing is cached in memory: "what's undoable" is derived fresh from the log every time. See [Event log & undo](#event-log--undo) below.
 - **Plain Markdown storage** — no database. Notes are portable, greppable, and remain fully editable in Obsidian while the API runs. Writes are synchronized and moves are atomic with a fallback that leaves the file untouched at origin on failure.
-- **Self-healing startup** — migrations normalize legacy notes on boot (missing `today_since`, malformed timestamps, bucket/folder mismatches), each individually toggleable.
+- **Self-healing startup** — migrations normalize legacy notes on boot (missing `today_since`, malformed timestamps, bucket/folder mismatches, the one-time folder-per-bucket split), each individually toggleable.
 - **Virtual threads** — `spring.threads.virtual.enabled=true`; blocking file and LLM I/O without pool tuning.
+
+## Event log & undo
+
+Every mutation — `create`, `move`, `done`, `dismiss`, `edit`/`update` (via `PUT`/`POST` or the confirm endpoint), `patch` — appends one JSON line to `.vault-meta/events.jsonl`:
+
+```json
+{
+  "id": "e-000123", "ts": "2026-07-03T14:22:31Z",
+  "actor": "user | llm", "kind": "mutation | undo", "op": "create | edit | update | move | dismiss | done | patch",
+  "file": "20260703-...md", "title": "...",
+  "path_before": "brain/backlog/...md", "path_after": "brain/today/...md",
+  "previous_content": "... (null if op=create)",
+  "confirmation": "none | confirmed", "undoes": "e-000120 (only on kind=undo)", "chat_ref": "t-000045 (null if manual)"
+}
+```
+
+- **`actor`** distinguishes a direct edit (`BucketController`, e.g. `PUT /api/items/{file}/body`) from an LLM-dispatched one (`ChatController`).
+- **`POST /api/undo`** finds the most recent `mutation` event without a matching `undo` event (`undoes` pointing at it), inverts it, and appends an `undo` event referencing it — so undo is strictly sequential and idempotent even across restarts.
+- **Retention** — the log is never truncated by deleting; once it exceeds ~1000 active lines, the oldest are moved to `.vault-meta/archive/events-YYYY-MM.jsonl`.
+- **Raw chat, separately** — `TranscriptLog` persists every user message and the LLM's raw ops response to `.vault-meta/transcript.jsonl` (rotated monthly to `.vault-meta/archive/`), so `GET /api/chat/history` can rehydrate a `requires_confirmation` card that's still pending after a page reload — it cross-references `EventLog` for a `confirmation: confirmed` event with a matching `chat_ref` to know whether it's already been resolved.
 
 ## GTD buckets
 
-The buckets are inspired by the lists in David Allen's [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_Done) workflow, plus two transient outcomes (`now`, `discard`) that the decision tree can produce but never files.
+The buckets are inspired by the lists in David Allen's [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_Done) workflow, plus two transient outcomes (`now`, `discard`) that the decision tree can produce but never files. `done` and `dismissed` are not classifier buckets — they're the terminal `status` a task reaches via `POST /api/items/{file}/done|dismiss`, moving it to its own folder while keeping its original `bucket` value for reference.
 
 | Bucket | Meaning | Filed to |
 |--------|---------|----------|
-| `today` | Do it today | `brain/inbox/` |
-| `backlog` | Do it eventually | `brain/inbox/` |
-| `waiting` | Delegated, waiting on someone | `brain/inbox/` |
+| `today` | Do it today | `brain/today/` |
+| `backlog` | Do it eventually | `brain/backlog/` |
+| `waiting` | Delegated, waiting on someone | `brain/waiting/` |
 | `someday` | Maybe someday | `brain/someday/` |
 | `reference` | Keep for reference, no action | `brain/resources/` |
 | `now` | 2-minute rule: do it right now | not filed |
 | `discard` | Not worth keeping | not filed — logged to `.vault-meta/discard-log.jsonl` |
+
+Terminal states, reached from any bucket: `done` → `brain/done/` (`done_date` set once), `dismissed` → `brain/discard/` (`discarded_date` set once). One folder per bucket/state — no shared inbox, so every transition (including between `today`/`backlog`/`waiting`) is a plain atomic move.
 
 ## Note format
 
@@ -83,8 +106,8 @@ tags: [gtd, action, health, calls]
 Optional free-form Markdown body.
 ```
 
-The classifier infers context tags and a time estimate from the message; the frontend uses `estimate_minutes` to project when the day's list finishes.
+The classifier infers context tags and a time estimate from the message; the frontend uses `estimate_minutes` to project when the day's list finishes. `confirmed: false` may also appear when the classifier used the low-confidence fallback prompt — absent, `true`, or `null` all mean confirmed (chosen so no existing task needs migrating).
 
 ## Testing strategy
 
-70 tests. Controllers are tested with `@WebMvcTest` + Mockito (HTTP contract, op dispatch, confirmation flow); `VaultServiceTest` exercises real filesystem I/O against `@TempDir` vaults, including the startup migrations and conflicting-move edge cases.
+98 tests. Controllers are tested with `@WebMvcTest` + Mockito (HTTP contract, op dispatch, confirmation flow); `VaultServiceTest` exercises real filesystem I/O against `@TempDir` vaults, including the startup migrations, the folder-per-bucket split, and undo end-to-end (create+undo, move+undo without leaving a duplicate); `EventLogTest` covers append/tail/rotation and tolerance of corrupted lines.
