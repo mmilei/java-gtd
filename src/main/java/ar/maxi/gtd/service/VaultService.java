@@ -176,7 +176,12 @@ public class VaultService {
     }
 
     public void dismissItem(String filename, Actor actor) {
-        mutate(filename, discardDir, actor, "dismiss", item -> {
+        dismissItem(filename, actor, "none", null);
+    }
+
+    /** Used by POST /api/chat/confirm to record that this dismiss was an LLM proposal the user approved, linked back to the chat message that proposed it. */
+    public void dismissItem(String filename, Actor actor, String confirmation, String chatRef) {
+        mutate(filename, discardDir, actor, "dismiss", confirmation, chatRef, item -> {
             item.put("status", "dismissed");
             item.putIfAbsent("discarded_date", LocalDate.now().toString());
         });
@@ -191,7 +196,12 @@ public class VaultService {
     }
 
     public void replaceBody(String filename, String newBody, Actor actor) {
-        mutate(filename, actor, "edit", item -> item.put("_body_override", newBody));
+        replaceBody(filename, newBody, actor, "none", null);
+    }
+
+    /** Used by POST /api/chat/confirm to record that this edit/update was an LLM proposal the user approved, linked back to the chat message that proposed it. */
+    public void replaceBody(String filename, String newBody, Actor actor, String confirmation, String chatRef) {
+        mutate(filename, actor, "edit", confirmation, chatRef, item -> item.put("_body_override", newBody));
     }
 
     public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
@@ -604,8 +614,16 @@ public class VaultService {
 
     /** In-place mutation: rewrites the file without moving it (target dir = its current parent). */
     private void mutate(String filename, Actor actor, String op, java.util.function.Consumer<Map<String, Object>> modifier) {
+        mutate(filename, actor, op, "none", null, modifier);
+    }
+
+    private void mutate(String filename, Actor actor, String op, String confirmation, String chatRef, java.util.function.Consumer<Map<String, Object>> modifier) {
         Path file = resolveFile(filename);
-        mutate(filename, file.getParent(), actor, op, modifier);
+        mutate(filename, file.getParent(), actor, op, confirmation, chatRef, modifier);
+    }
+
+    private void mutate(String filename, Path targetDir, Actor actor, String op, java.util.function.Consumer<Map<String, Object>> modifier) {
+        mutate(filename, targetDir, actor, op, "none", null, modifier);
     }
 
     /**
@@ -617,7 +635,7 @@ public class VaultService {
      * The event is appended only after the write succeeds — unlike the old UndoStack, which
      * pushed before writing and could leave a phantom undo entry if the write failed.
      */
-    private synchronized void mutate(String filename, Path targetDir, Actor actor, String op, java.util.function.Consumer<Map<String, Object>> modifier) {
+    private synchronized void mutate(String filename, Path targetDir, Actor actor, String op, String confirmation, String chatRef, java.util.function.Consumer<Map<String, Object>> modifier) {
         Path file = resolveFile(filename);
         try {
             String previousContent = Files.readString(file);
@@ -647,7 +665,7 @@ public class VaultService {
                 Files.writeString(file, newContent);
             }
             eventLog.append(Event.mutation(actor, op, filename, String.valueOf(item.get("title")),
-                file.toString(), dest.toString(), previousContent, "none", null));
+                file.toString(), dest.toString(), previousContent, confirmation, chatRef));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
