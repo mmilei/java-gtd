@@ -1,5 +1,6 @@
 package ar.maxi.gtd.api;
 
+import ar.maxi.gtd.service.Actor;
 import ar.maxi.gtd.service.ClassifierService;
 import ar.maxi.gtd.service.ClassifierService.ClassifyResult;
 import ar.maxi.gtd.service.VaultService;
@@ -85,7 +86,7 @@ public class ChatController {
                 "message", op.getOrDefault("message", "No archivado.")
             );
         }
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.LLM);
         return Map.of(
             "op", "create",
             "filed", true,
@@ -101,7 +102,7 @@ public class ChatController {
             return Map.of("op", "done", "filed", false, "error", "no match found");
         }
         Map<String, Object> current = vault.read(targetFile);
-        vault.markDone(targetFile);
+        vault.markDone(targetFile, Actor.LLM);
         return Map.of(
             "op", "done",
             "filed", true,
@@ -151,7 +152,7 @@ public class ChatController {
         String newBucket = (String) op.get("new_bucket");
         String due = (String) op.get("due");
         Map<String, Object> current = vault.read(targetFile);
-        vault.moveBucket(targetFile, newBucket, due);
+        vault.moveBucket(targetFile, newBucket, due, Actor.LLM);
         return Map.of(
             "op", "move",
             "filed", true,
@@ -170,7 +171,7 @@ public class ChatController {
         if (op.containsKey("tags"))        meta.put("tags", op.get("tags"));
         if (op.containsKey("due"))         meta.put("due", op.get("due"));
         if (op.containsKey("today_since")) meta.put("today_since", op.get("today_since"));
-        vault.patchMeta(targetFile, meta);
+        vault.patchMeta(targetFile, meta, Actor.LLM);
         return Map.of("op", "patch", "filed", true, "file", targetFile);
     }
 

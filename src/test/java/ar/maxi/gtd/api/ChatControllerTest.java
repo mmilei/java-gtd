@@ -1,5 +1,6 @@
 package ar.maxi.gtd.api;
 
+import ar.maxi.gtd.service.Actor;
 import ar.maxi.gtd.service.ClassifierService;
 import ar.maxi.gtd.service.ClassifierService.ClassifyResult;
 import ar.maxi.gtd.service.VaultService;
@@ -38,7 +39,7 @@ class ChatControllerTest {
                         "body", "", "due", "", "delegado_a", "", "tags", List.of())
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
-        when(vault.write(any())).thenReturn("20260625-120000-call-the-doctor.md");
+        when(vault.write(any(), any())).thenReturn("20260625-120000-call-the-doctor.md");
 
         mvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -72,7 +73,7 @@ class ChatControllerTest {
                         "body", "", "due", "", "delegado_a", "", "tags", List.of())
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, true));
-        when(vault.write(any())).thenReturn("20260625-120000-learn-piano.md");
+        when(vault.write(any(), any())).thenReturn("20260625-120000-learn-piano.md");
 
         mvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -98,7 +99,7 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.ops[0].op").value("done"))
                 .andExpect(jsonPath("$.ops[0].filed").value(true))
                 .andExpect(jsonPath("$.ops[0].title").value("Test task"));
-        verify(vault).markDone("20260625-120000-test.md");
+        verify(vault).markDone("20260625-120000-test.md", Actor.LLM);
     }
 
     @Test
@@ -119,7 +120,7 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.ops[0].filed").value(true))
                 .andExpect(jsonPath("$.ops[0].new_bucket").value("today"))
                 .andExpect(jsonPath("$.ops[0].title").value("Test task"));
-        verify(vault).moveBucket("20260625-120000-test.md", "today", null);
+        verify(vault).moveBucket("20260625-120000-test.md", "today", null, Actor.LLM);
     }
 
     @Test
@@ -141,7 +142,7 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.ops[0].requires_confirmation").value(true))
                 .andExpect(jsonPath("$.ops[0].current_body").value("Original content"))
                 .andExpect(jsonPath("$.ops[0].proposed_body").value("Updated content"));
-        verify(vault, never()).replaceBody(any(), any());
+        verify(vault, never()).replaceBody(any(), any(), any());
         verify(vault).read("20260625-120000-test.md");
     }
 
@@ -159,7 +160,7 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.ops[0].op").value("edit"))
                 .andExpect(jsonPath("$.ops[0].filed").value(false))
                 .andExpect(jsonPath("$.ops[0].error").exists());
-        verify(vault, never()).replaceBody(any(), any());
+        verify(vault, never()).replaceBody(any(), any(), any());
     }
 
     @Test
@@ -181,7 +182,7 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.ops[0].requires_confirmation").value(true))
                 .andExpect(jsonPath("$.ops[0].current_body").value("Existing content"))
                 .andExpect(jsonPath("$.ops[0].proposed_body").value("Existing content\nNew line"));
-        verify(vault, never()).appendToTask(any(), any());
+        verify(vault, never()).appendToTask(any(), any(), any());
         verify(vault).read("20260625-120000-test.md");
     }
 
@@ -203,7 +204,7 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.ops[0].filed").value(false))
                 .andExpect(jsonPath("$.ops[0].requires_confirmation").value(true))
                 .andExpect(jsonPath("$.ops[0].title").value("Test task"));
-        verify(vault, never()).dismissItem(any());
+        verify(vault, never()).dismissItem(any(), any());
         verify(vault).read("20260625-120000-test.md");
     }
 
@@ -221,6 +222,6 @@ class ChatControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ops[0].filed").value(false))
                 .andExpect(jsonPath("$.ops[0].bucket").value("now"));
-        verify(vault, never()).write(any());
+        verify(vault, never()).write(any(), any());
     }
 }

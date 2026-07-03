@@ -14,7 +14,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class VaultServiceTest {
 
     private static VaultService newVault(Path tempDir) {
-        return new VaultService(tempDir.toString(), new UndoStack(), true, true, true, true, true);
+        return newVault(tempDir, new EventLog(tempDir.toString()));
+    }
+
+    private static VaultService newVault(Path tempDir, EventLog eventLog) {
+        return new VaultService(tempDir.toString(), eventLog, true, true, true, true, true);
     }
 
     @Test
@@ -67,7 +71,7 @@ class VaultServiceTest {
         op.put("title", "Do something");
         op.put("tags", new java.util.ArrayList<>(List.of("work")));
 
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
         Map<String, Object> saved = vault.read(filename);
 
         @SuppressWarnings("unchecked")
@@ -85,7 +89,7 @@ class VaultServiceTest {
         op.put("title", "Useful documentation");
         op.put("tags", new java.util.ArrayList<>(List.of("gtd", "action", "work")));
 
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
         Map<String, Object> saved = vault.read(filename);
 
         @SuppressWarnings("unchecked")
@@ -102,7 +106,7 @@ class VaultServiceTest {
         op.put("title", "Task with no tags");
         op.put("tags", null);
 
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
         Map<String, Object> saved = vault.read(filename);
 
         @SuppressWarnings("unchecked")
@@ -117,7 +121,7 @@ class VaultServiceTest {
         op.put("bucket", "not-a-real-bucket");
         op.put("title", "Bad bucket");
 
-        assertThatThrownBy(() -> vault.write(op)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> vault.write(op, Actor.USER)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -127,11 +131,11 @@ class VaultServiceTest {
         op.put("bucket", "someday");
         op.put("title", "Someday task");
         op.put("tags", new java.util.ArrayList<>(List.of("work")));
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
 
         assertThat(tempDir.resolve("brain/someday").resolve(filename)).exists();
 
-        vault.moveBucket(filename, "backlog", null);
+        vault.moveBucket(filename, "backlog", null, Actor.USER);
 
         assertThat(tempDir.resolve("brain/backlog").resolve(filename)).exists();
         assertThat(tempDir.resolve("brain/someday").resolve(filename)).doesNotExist();
@@ -144,13 +148,13 @@ class VaultServiceTest {
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "today");
         op.put("title", "Triage me");
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
 
-        vault.moveBucket(filename, "waiting", null);
+        vault.moveBucket(filename, "waiting", null, Actor.USER);
         assertThat(tempDir.resolve("brain/waiting").resolve(filename)).exists();
         assertThat(tempDir.resolve("brain/today").resolve(filename)).doesNotExist();
 
-        vault.moveBucket(filename, "backlog", null);
+        vault.moveBucket(filename, "backlog", null, Actor.USER);
         assertThat(tempDir.resolve("brain/backlog").resolve(filename)).exists();
         assertThat(tempDir.resolve("brain/waiting").resolve(filename)).doesNotExist();
     }
@@ -161,9 +165,9 @@ class VaultServiceTest {
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "today");
         op.put("title", "Finish this");
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
 
-        vault.markDone(filename);
+        vault.markDone(filename, Actor.USER);
 
         assertThat(tempDir.resolve("brain/done").resolve(filename)).exists();
         assertThat(tempDir.resolve("brain/today").resolve(filename)).doesNotExist();
@@ -175,7 +179,7 @@ class VaultServiceTest {
         // editing an already-done item must not overwrite the original done_date
         Files.writeString(tempDir.resolve("brain/done").resolve(filename),
             Files.readString(tempDir.resolve("brain/done").resolve(filename)));
-        vault.appendToTask(filename, "extra note");
+        vault.appendToTask(filename, "extra note", Actor.USER);
         assertThat(vault.read(filename).get("done_date")).isEqualTo(doneDate);
     }
 
@@ -185,9 +189,9 @@ class VaultServiceTest {
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
         op.put("title", "Drop this");
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
 
-        vault.dismissItem(filename);
+        vault.dismissItem(filename, Actor.USER);
 
         assertThat(tempDir.resolve("brain/discard").resolve(filename)).exists();
         assertThat(tempDir.resolve("brain/backlog").resolve(filename)).doesNotExist();
@@ -371,13 +375,13 @@ class VaultServiceTest {
         op.put("bucket", "backlog");
         op.put("title", "Conflicting move");
         op.put("tags", new java.util.ArrayList<>(List.of("work")));
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
         String originalContent = Files.readString(backlog.resolve(filename));
 
         // Pre-create a conflicting file at the move destination to force Files.move to throw.
         Files.writeString(someday.resolve(filename), "conflicting content");
 
-        assertThatThrownBy(() -> vault.moveBucket(filename, "someday", null))
+        assertThatThrownBy(() -> vault.moveBucket(filename, "someday", null, Actor.USER))
             .isInstanceOf(java.io.UncheckedIOException.class);
 
         assertThat(Files.readString(backlog.resolve(filename))).isEqualTo(originalContent);
@@ -484,9 +488,9 @@ class VaultServiceTest {
         op.put("bucket", "backlog");
         op.put("title", "Move to reference");
         op.put("tags", new java.util.ArrayList<>(List.of("work")));
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
 
-        vault.moveBucket(filename, "reference", null);
+        vault.moveBucket(filename, "reference", null, Actor.USER);
         Map<String, Object> moved = vault.read(filename);
 
         @SuppressWarnings("unchecked")
@@ -504,19 +508,19 @@ class VaultServiceTest {
         today.put("bucket", "today");
         today.put("title", "Today task");
         today.put("tags", new java.util.ArrayList<>(List.of("shopping")));
-        vault.write(today);
+        vault.write(today, Actor.USER);
 
         Map<String, Object> backlog1 = new java.util.LinkedHashMap<>();
         backlog1.put("bucket", "backlog");
         backlog1.put("title", "Backlog task 1");
         backlog1.put("tags", new java.util.ArrayList<>(List.of("shopping")));
-        vault.write(backlog1);
+        vault.write(backlog1, Actor.USER);
 
         Map<String, Object> backlog2 = new java.util.LinkedHashMap<>();
         backlog2.put("bucket", "backlog");
         backlog2.put("title", "Backlog task 2");
         backlog2.put("tags", new java.util.ArrayList<>(List.of("shopping", "urgent")));
-        vault.write(backlog2);
+        vault.write(backlog2, Actor.USER);
 
         Map<String, Map<String, Integer>> counts = vault.tagCounts();
 
@@ -537,13 +541,13 @@ class VaultServiceTest {
         op.put("bucket", "waiting");
         op.put("title", "Ask Juan");
         op.put("delegado_a", "Juan");
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
 
         @SuppressWarnings("unchecked")
         List<String> delegados = (List<String>) vault.read(filename).get("delegado_a");
         assertThat(delegados).containsExactly("Juan");
 
-        vault.patchMeta(filename, Map.of("delegado_a", List.of("Juan", "Maria")));
+        vault.patchMeta(filename, Map.of("delegado_a", List.of("Juan", "Maria")), Actor.USER);
 
         @SuppressWarnings("unchecked")
         List<String> updated = (List<String>) vault.read(filename).get("delegado_a");
@@ -558,7 +562,7 @@ class VaultServiceTest {
         op.put("bucket", "waiting");
         op.put("title", "Ask someone");
         op.put("delegado_a", java.util.Arrays.asList("Juan", null, "  "));
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
 
         @SuppressWarnings("unchecked")
         List<String> delegados = (List<String>) vault.read(filename).get("delegado_a");
@@ -575,11 +579,11 @@ class VaultServiceTest {
         op.put("title", "Clean the kitchen");
         op.put("tags", new java.util.ArrayList<>(List.of("home")));
         op.put("estimate_minutes", 30);
-        String filename = vault.write(op);
+        String filename = vault.write(op, Actor.USER);
 
         assertThat(vault.read(filename).get("estimate_minutes")).isEqualTo(30);
 
-        vault.patchMeta(filename, Map.of("estimate_minutes", 45));
+        vault.patchMeta(filename, Map.of("estimate_minutes", 45), Actor.USER);
         assertThat(vault.read(filename).get("estimate_minutes")).isEqualTo(45);
     }
 
@@ -607,5 +611,69 @@ class VaultServiceTest {
         @SuppressWarnings("unchecked")
         List<String> delegados = (List<String>) vault.read(filename).get("delegado_a");
         assertThat(delegados).containsExactly("Juan");
+    }
+
+    @Test
+    void undoOfCreateShouldDeleteTheFile(@TempDir Path tempDir) throws Exception {
+        EventLog eventLog = new EventLog(tempDir.toString());
+        VaultService vault = newVault(tempDir, eventLog);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Undo me");
+        String filename = vault.write(op, Actor.USER);
+        assertThat(tempDir.resolve("brain/backlog").resolve(filename)).exists();
+
+        Event created = eventLog.nextUndoable().orElseThrow();
+        vault.undoEvent(created);
+
+        assertThat(tempDir.resolve("brain/backlog").resolve(filename)).doesNotExist();
+    }
+
+    @Test
+    void undoOfMoveShouldRestoreOriginalLocationWithoutLeavingADuplicateAtDestination(@TempDir Path tempDir) throws Exception {
+        EventLog eventLog = new EventLog(tempDir.toString());
+        VaultService vault = newVault(tempDir, eventLog);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Move me");
+        String filename = vault.write(op, Actor.USER);
+
+        vault.moveBucket(filename, "today", null, Actor.USER);
+        assertThat(tempDir.resolve("brain/today").resolve(filename)).exists();
+
+        Event moveEvent = eventLog.tail(0, null, "move").get(0);
+        vault.undoEvent(moveEvent);
+
+        assertThat(tempDir.resolve("brain/backlog").resolve(filename))
+            .as("undo must restore the file at its pre-move location")
+            .exists();
+        assertThat(tempDir.resolve("brain/today").resolve(filename))
+            .as("undo must not leave a duplicate at the post-move location — this was the historical bug")
+            .doesNotExist();
+    }
+
+    @Test
+    void undoControllerFlowShouldWalkBackTwoMutationsInReverseOrder(@TempDir Path tempDir) throws Exception {
+        EventLog eventLog = new EventLog(tempDir.toString());
+        VaultService vault = newVault(tempDir, eventLog);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Two-step task");
+        String filename = vault.write(op, Actor.USER);
+        vault.moveBucket(filename, "today", null, Actor.USER);
+
+        // step 1: undo the move -> back to backlog
+        Event lastMove = eventLog.nextUndoable().orElseThrow();
+        vault.undoEvent(lastMove);
+        eventLog.append(Event.undoOf(lastMove));
+        assertThat(tempDir.resolve("brain/backlog").resolve(filename)).exists();
+
+        // step 2: undo the create -> file gone entirely
+        Event createEvent = eventLog.nextUndoable().orElseThrow();
+        vault.undoEvent(createEvent);
+        eventLog.append(Event.undoOf(createEvent));
+        assertThat(tempDir.resolve("brain/backlog").resolve(filename)).doesNotExist();
+
+        assertThat(eventLog.nextUndoable()).isEmpty();
     }
 }

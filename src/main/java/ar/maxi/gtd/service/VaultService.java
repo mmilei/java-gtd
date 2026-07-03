@@ -34,7 +34,7 @@ public class VaultService {
     private final Path legacyInboxDir;
     private final List<Path> allDirs;
     private final Path archiveDuplicatesDir;
-    private final UndoStack undoStack;
+    private final EventLog eventLog;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
@@ -43,7 +43,7 @@ public class VaultService {
 
     public VaultService(
             @Value("${gtd.vault.path}") String vaultPath,
-            UndoStack undoStack,
+            EventLog eventLog,
             @Value("${gtd.vault.migrate-today-since:true}") boolean migrateTodaySinceEnabled,
             @Value("${gtd.vault.migrate-timestamps:true}") boolean migrateTimestampsEnabled,
             @Value("${gtd.vault.migrate-bucket-mismatch:true}") boolean migrateBucketMismatchEnabled,
@@ -60,7 +60,7 @@ public class VaultService {
         this.legacyInboxDir = Path.of(vaultPath, "brain/inbox");
         this.allDirs = List.of(todayDir, backlogDir, waitingDir, somedayDir, resourcesDir, doneDir, discardDir);
         this.archiveDuplicatesDir = Path.of(vaultPath, "brain/.archive/duplicates");
-        this.undoStack = undoStack;
+        this.eventLog = eventLog;
         try {
             for (Path dir : allDirs) Files.createDirectories(dir);
             Files.createDirectories(archiveDuplicatesDir);
@@ -74,7 +74,7 @@ public class VaultService {
         if (migrateDelegadoListEnabled) migrateDelegadoToList();
     }
 
-    public String write(Map<String, Object> item) {
+    public String write(Map<String, Object> item, Actor actor) {
         String bucket = (String) item.get("bucket");
         Path dir = dirFor(bucket);
 
@@ -106,8 +106,8 @@ public class VaultService {
 
         try {
             Files.writeString(dest, content);
-            // undo: previousContent null = delete on undo
-            undoStack.push(new UndoStack.UndoEntry(filename, dest, null));
+            eventLog.append(Event.mutation(actor, "create", filename, String.valueOf(frontmatter.get("title")),
+                null, dest.toString(), null, "none", null));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -168,38 +168,62 @@ public class VaultService {
         return counts;
     }
 
-    public void markDone(String filename) {
-        mutate(filename, doneDir, item -> {
+    public void markDone(String filename, Actor actor) {
+        mutate(filename, doneDir, actor, "done", item -> {
             item.put("status", "done");
             item.putIfAbsent("done_date", LocalDate.now().toString());
         });
     }
 
-    public void dismissItem(String filename) {
-        mutate(filename, discardDir, item -> {
+    public void dismissItem(String filename, Actor actor) {
+        mutate(filename, discardDir, actor, "dismiss", item -> {
             item.put("status", "dismissed");
             item.putIfAbsent("discarded_date", LocalDate.now().toString());
         });
     }
 
-    public void appendToTask(String filename, String append) {
-        mutate(filename, item -> {
+    public void appendToTask(String filename, String append, Actor actor) {
+        mutate(filename, actor, "update", item -> {
             String body = (String) item.remove("body");
             String newBody = (body == null || body.isBlank()) ? append : body + "\n" + append;
             item.put("_body_override", newBody);
         });
     }
 
-    public void replaceBody(String filename, String newBody) {
-        mutate(filename, item -> item.put("_body_override", newBody));
+    public void replaceBody(String filename, String newBody, Actor actor) {
+        mutate(filename, actor, "edit", item -> item.put("_body_override", newBody));
     }
 
-    public void patchMeta(String filename, Map<String, Object> meta) {
+    public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
         Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes");
-        mutate(filename, item -> meta.forEach((k, v) -> {
+        mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             item.put(k, "delegado_a".equals(k) ? delegadoAsList(v) : v);
         }));
+    }
+
+    /**
+     * Inverts a mutation event: no previousContent means it was a create (undo = delete);
+     * otherwise moves the file back from path_after to path_before (if they differ — covers
+     * move/done/dismiss) and restores previous_content. This single path-based rule replaces the
+     * old op-specific undo logic and, as a side effect, fixes the historical bug where undoing a
+     * move restored content at the old path but left the moved-to copy behind as a duplicate.
+     */
+    public synchronized void undoEvent(Event e) {
+        try {
+            Path after = e.pathAfter() != null ? Path.of(e.pathAfter()) : null;
+            if (e.previousContent() == null) {
+                if (after != null) Files.deleteIfExists(after);
+                return;
+            }
+            Path before = Path.of(e.pathBefore());
+            if (after != null && !after.equals(before)) {
+                moveAtomically(after, before);
+            }
+            Files.writeString(before, e.previousContent());
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
     }
 
     public Map<String, Object> read(String filename) {
@@ -303,8 +327,8 @@ public class VaultService {
         return limit > 0 ? all.subList(0, Math.min(limit, all.size())) : all;
     }
 
-    public void moveBucket(String filename, String newBucket, String due) {
-        mutate(filename, dirFor(newBucket), item -> {
+    public void moveBucket(String filename, String newBucket, String due, Actor actor) {
+        mutate(filename, dirFor(newBucket), actor, "move", item -> {
             item.put("bucket", newBucket);
             if (due != null && !due.isBlank()) item.put("due", due);
             if ("reference".equals(newBucket)) {
@@ -579,9 +603,9 @@ public class VaultService {
     }
 
     /** In-place mutation: rewrites the file without moving it (target dir = its current parent). */
-    private void mutate(String filename, java.util.function.Consumer<Map<String, Object>> modifier) {
+    private void mutate(String filename, Actor actor, String op, java.util.function.Consumer<Map<String, Object>> modifier) {
         Path file = resolveFile(filename);
-        mutate(filename, file.getParent(), modifier);
+        mutate(filename, file.getParent(), actor, op, modifier);
     }
 
     /**
@@ -589,12 +613,14 @@ public class VaultService {
      * moves it there atomically first. With one folder per bucket, every bucket transition
      * (today/backlog/waiting/someday/reference) and every done/discard is a move — there is no
      * special "already in the right place" branch to maintain, path equality covers it.
+     *
+     * The event is appended only after the write succeeds — unlike the old UndoStack, which
+     * pushed before writing and could leave a phantom undo entry if the write failed.
      */
-    private synchronized void mutate(String filename, Path targetDir, java.util.function.Consumer<Map<String, Object>> modifier) {
+    private synchronized void mutate(String filename, Path targetDir, Actor actor, String op, java.util.function.Consumer<Map<String, Object>> modifier) {
         Path file = resolveFile(filename);
         try {
             String previousContent = Files.readString(file);
-            undoStack.push(new UndoStack.UndoEntry(filename, file, previousContent));
 
             Map<String, Object> item = MarkdownSerializer.parse(previousContent, filename);
             String body = (String) item.remove("body");
@@ -620,6 +646,8 @@ public class VaultService {
             } else {
                 Files.writeString(file, newContent);
             }
+            eventLog.append(Event.mutation(actor, op, filename, String.valueOf(item.get("title")),
+                file.toString(), dest.toString(), previousContent, "none", null));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
