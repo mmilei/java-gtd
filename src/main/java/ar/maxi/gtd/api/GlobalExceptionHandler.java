@@ -23,7 +23,6 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, String>> handleGeneric(Exception e) {
         log.error("Unhandled exception", e);
-        String msg = e.getMessage() != null ? e.getMessage() : "Internal server error";
-        return ResponseEntity.internalServerError().body(Map.of("error", msg));
+        return ResponseEntity.internalServerError().body(Map.of("error", "Internal server error"));
     }
 }
