@@ -187,6 +187,8 @@ public class VaultService {
         });
     }
 
+    // TODO: not yet wired to any endpoint/prompt — utilizar en el flujo/prompt cuando el
+    // classifier o el frontend necesiten "agregar" en vez de "reemplazar" el body de una tarea.
     public void appendToTask(String filename, String append, Actor actor) {
         mutate(filename, actor, "update", item -> {
             String body = (String) item.remove("body");
@@ -244,7 +246,11 @@ public class VaultService {
     }
 
     public String readContextFile(String relativePath) {
-        Path file = Path.of(vaultPath, relativePath);
+        Path base = Path.of(vaultPath).toAbsolutePath().normalize();
+        Path file = base.resolve(relativePath).normalize();
+        if (!file.startsWith(base)) {
+            throw new IllegalArgumentException("Invalid path: " + relativePath);
+        }
         if (!Files.exists(file)) return "";
         try {
             return Files.readString(file);
@@ -257,9 +263,9 @@ public class VaultService {
     public Map<String, Object> stats() {
         Map<String, Integer> counts = new LinkedHashMap<>();
         int total = 0;
-        for (String bucket : ALL_BUCKETS) {
-            int count = list(bucket).size();
-            counts.put(bucket, count);
+        for (var entry : listAll().entrySet()) {
+            int count = entry.getValue().size();
+            counts.put(entry.getKey(), count);
             total += count;
         }
         return Map.of("counts", counts, "total", total);
@@ -711,6 +717,7 @@ public class VaultService {
             map.put("file", file.getFileName().toString());
             return map;
         } catch (IOException e) {
+            log.warn("readFile: could not read {}, excluding from listing: {}", file, e.getMessage());
             return null;
         }
     }
