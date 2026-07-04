@@ -3,7 +3,9 @@ package ar.maxi.gtd.util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 import org.yaml.snakeyaml.error.YAMLException;
 
 import java.time.ZoneOffset;
@@ -39,7 +41,7 @@ public final class MarkdownSerializer {
         int bodyStart = content.indexOf('\n', secondMarker + 1);
         String bodyPart = bodyStart == -1 ? "" : content.substring(bodyStart + 1).strip();
 
-        Yaml yaml = new Yaml();
+        Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
         Map<String, Object> map;
         try {
             map = yaml.load(yamlPart);
