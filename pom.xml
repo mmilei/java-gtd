@@ -11,7 +11,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>ar.maxi</groupId>
+    <groupId>com.gtd</groupId>
     <artifactId>gtd</artifactId>
     <version>2.1.0</version>
     <name>java-gtd</name>
