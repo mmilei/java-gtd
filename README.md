@@ -54,7 +54,7 @@ Inspired by [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_D
 | AI integration | Spring AI + OpenAI-compatible APIs |
 | LLM providers | Groq (Llama 3.3-70b) · Ollama (local) |
 | Storage | Obsidian vault (Markdown + YAML frontmatter) |
-| Tests | JUnit 5 · Mockito — 109 tests |
+| Tests | JUnit 5 · Mockito — 110 tests |
 
 ## Dependencies
 

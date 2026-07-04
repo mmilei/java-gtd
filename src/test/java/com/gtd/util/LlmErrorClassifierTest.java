@@ -30,6 +30,15 @@ class LlmErrorClassifierTest {
     }
 
     @Test
+    void shouldMatchMessageTextCaseInsensitively() {
+        // provider without the snake_case code field, message text capitalized
+        String raw = "429 - {\"error\":{\"message\":\"Rate limit reached for requests\"}}";
+
+        assertThat(LlmErrorClassifier.classify(raw).kind())
+            .isEqualTo(LlmErrorClassifier.Kind.RATE_LIMIT);
+    }
+
+    @Test
     void shouldFallBackToGenericProviderError() {
         String raw = "503 - {\"error\":{\"message\":\"Service unavailable\",\"type\":\"server_error\"}}";
 

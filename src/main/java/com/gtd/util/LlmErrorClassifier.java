@@ -22,7 +22,8 @@ public final class LlmErrorClassifier {
     private LlmErrorClassifier() {}
 
     public static LlmError classify(String rawMessage) {
-        String body = stripStatusPrefix(rawMessage);
+        // lowercase once: error codes are snake_case but message text varies ("Rate limit reached")
+        String body = stripStatusPrefix(rawMessage).toLowerCase();
         if (body.contains("rate_limit_exceeded") || body.contains("rate limit")) {
             return new LlmError(Kind.RATE_LIMIT, 429,
                 "The LLM provider's usage limit was reached. Wait a moment and retry, or switch to another provider from the provider menu.");
