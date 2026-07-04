@@ -26,13 +26,14 @@ public class ChatController {
     private final VaultService vault;
     private final TranscriptLog transcript;
     private final EventLog eventLog;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
 
-    public ChatController(ClassifierService classifier, VaultService vault, TranscriptLog transcript, EventLog eventLog) {
+    public ChatController(ClassifierService classifier, VaultService vault, TranscriptLog transcript, EventLog eventLog, ObjectMapper mapper) {
         this.classifier = classifier;
         this.vault = vault;
         this.transcript = transcript;
         this.eventLog = eventLog;
+        this.mapper = mapper;
     }
 
     @PostMapping("/chat")
