@@ -3,6 +3,7 @@ package ar.maxi.gtd.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -31,15 +32,22 @@ public class TranscriptLog {
 
     private final Path transcriptFile;
     private final Path archiveDir;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
     private final AtomicLong idCounter;
     /** Cheap gate for rotateStaleMonths(): skip the full read/reparse unless the calendar month actually rolled over. */
     private volatile String lastCheckedMonth;
 
-    public TranscriptLog(@Value("${gtd.vault.path}") String vaultPath) {
+    /** Convenience constructor for tests that don't care which ObjectMapper instance is used. */
+    TranscriptLog(String vaultPath) {
+        this(vaultPath, new ObjectMapper());
+    }
+
+    @Autowired
+    public TranscriptLog(@Value("${gtd.vault.path}") String vaultPath, ObjectMapper mapper) {
         Path metaDir = Path.of(vaultPath, ".vault-meta");
         this.transcriptFile = metaDir.resolve("transcript.jsonl");
         this.archiveDir = metaDir.resolve("archive");
+        this.mapper = mapper;
         this.idCounter = new AtomicLong(lastIdNumber(readAll()));
     }
 

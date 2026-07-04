@@ -1,5 +1,6 @@
 package ar.maxi.gtd.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,7 +20,7 @@ class VaultServiceTest {
     }
 
     private static VaultService newVault(Path tempDir, EventLog eventLog) {
-        return new VaultService(tempDir.toString(), eventLog, true, true, true, true, true);
+        return new VaultService(tempDir.toString(), eventLog, new ObjectMapper(), true, true, true, true, true);
     }
 
     @Test

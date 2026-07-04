@@ -1,6 +1,7 @@
 package ar.maxi.gtd.service;
 
 import ar.maxi.gtd.util.MarkdownSerializer;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +36,7 @@ public class VaultService {
     private final List<Path> allDirs;
     private final Path archiveDuplicatesDir;
     private final EventLog eventLog;
+    private final ObjectMapper mapper;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
@@ -44,12 +46,14 @@ public class VaultService {
     public VaultService(
             @Value("${gtd.vault.path}") String vaultPath,
             EventLog eventLog,
+            ObjectMapper mapper,
             @Value("${gtd.vault.migrate-today-since:true}") boolean migrateTodaySinceEnabled,
             @Value("${gtd.vault.migrate-timestamps:true}") boolean migrateTimestampsEnabled,
             @Value("${gtd.vault.migrate-bucket-mismatch:true}") boolean migrateBucketMismatchEnabled,
             @Value("${gtd.vault.migrate-delegado-list:true}") boolean migrateDelegadoListEnabled,
             @Value("${gtd.vault.migrate-folder-split:true}") boolean migrateFolderSplitEnabled) {
         this.vaultPath      = vaultPath;
+        this.mapper         = mapper;
         this.todayDir       = Path.of(vaultPath, "brain/today");
         this.backlogDir     = Path.of(vaultPath, "brain/backlog");
         this.waitingDir     = Path.of(vaultPath, "brain/waiting");
@@ -121,7 +125,7 @@ public class VaultService {
                 .filter(p -> p.toString().endsWith(".md"))
                 .map(this::readFile)
                 .filter(Objects::nonNull)
-                .filter(m -> bucket == null || bucket.equals(m.get("bucket")))
+                .filter(m -> bucket.equals(m.get("bucket")))
                 .filter(m -> !INACTIVE_STATUSES.contains(String.valueOf(m.getOrDefault("status", ""))))
                 .sorted(Comparator.comparing(m -> String.valueOf(m.getOrDefault("file", ""))))
                 .collect(Collectors.toList());
@@ -376,8 +380,7 @@ public class VaultService {
             entry.put("ts", java.time.Instant.now().toString());
             entry.put("message", message);
             entry.put("ops", ops);
-            String line = new com.fasterxml.jackson.databind.ObjectMapper()
-                .writeValueAsString(entry) + "\n";
+            String line = mapper.writeValueAsString(entry) + "\n";
             Files.writeString(logFile, line,
                 java.nio.file.StandardOpenOption.CREATE,
                 java.nio.file.StandardOpenOption.APPEND);

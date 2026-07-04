@@ -3,6 +3,7 @@ package ar.maxi.gtd.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -35,15 +36,22 @@ public class EventLog {
 
     private final Path eventsFile;
     private final Path archiveDir;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
     private final AtomicLong idCounter;
     /** Cheap gate for rotateIfNeeded() so a normal append doesn't re-read/re-parse the whole active log. */
     private final AtomicLong activeCount;
 
-    public EventLog(@Value("${gtd.vault.path}") String vaultPath) {
+    /** Convenience constructor for tests that don't care which ObjectMapper instance is used. */
+    EventLog(String vaultPath) {
+        this(vaultPath, new ObjectMapper());
+    }
+
+    @Autowired
+    public EventLog(@Value("${gtd.vault.path}") String vaultPath, ObjectMapper mapper) {
         Path metaDir = Path.of(vaultPath, ".vault-meta");
         this.eventsFile = metaDir.resolve("events.jsonl");
         this.archiveDir = metaDir.resolve("archive");
+        this.mapper = mapper;
         List<Event> initial = readAll();
         this.idCounter = new AtomicLong(lastIdNumber(initial));
         this.activeCount = new AtomicLong(initial.size());

@@ -1,5 +1,6 @@
 package ar.maxi.gtd.service;
 
+import ar.maxi.gtd.util.MarkdownSerializer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -222,12 +223,7 @@ public class ClassifierService {
 
     private List<Map<String, Object>> parseJsonList(String raw) {
         try {
-            String json = raw.strip();
-            if (json.startsWith("```")) {
-                int start = json.indexOf('\n') + 1;
-                int end = json.lastIndexOf("```");
-                json = json.substring(start, end).strip();
-            }
+            String json = MarkdownSerializer.stripFences(raw);
             return objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
         } catch (Exception e) {
             throw new RuntimeException("LLM returned invalid JSON: " + raw, e);

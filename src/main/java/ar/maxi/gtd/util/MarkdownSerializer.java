@@ -83,4 +83,13 @@ public final class MarkdownSerializer {
         }
         return sb.toString();
     }
+
+    /** Strips a ```json ... ``` (or bare ```) fence LLMs commonly wrap JSON responses in, if present. */
+    public static String stripFences(String raw) {
+        String json = raw.strip();
+        if (!json.startsWith("```")) return json;
+        int start = json.indexOf('\n') + 1;
+        int end = json.lastIndexOf("```");
+        return json.substring(start, end).strip();
+    }
 }
