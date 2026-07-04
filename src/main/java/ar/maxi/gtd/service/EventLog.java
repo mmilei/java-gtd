@@ -37,12 +37,16 @@ public class EventLog {
     private final Path archiveDir;
     private final ObjectMapper mapper = new ObjectMapper();
     private final AtomicLong idCounter;
+    /** Cheap gate for rotateIfNeeded() so a normal append doesn't re-read/re-parse the whole active log. */
+    private final AtomicLong activeCount;
 
     public EventLog(@Value("${gtd.vault.path}") String vaultPath) {
         Path metaDir = Path.of(vaultPath, ".vault-meta");
         this.eventsFile = metaDir.resolve("events.jsonl");
         this.archiveDir = metaDir.resolve("archive");
-        this.idCounter = new AtomicLong(lastIdNumber(readAll()));
+        List<Event> initial = readAll();
+        this.idCounter = new AtomicLong(lastIdNumber(initial));
+        this.activeCount = new AtomicLong(initial.size());
     }
 
     public synchronized Event append(Event event) {
@@ -54,7 +58,9 @@ public class EventLog {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        rotateIfNeeded();
+        if (activeCount.incrementAndGet() > MAX_ACTIVE_EVENTS) {
+            rotateIfNeeded();
+        }
         return stamped;
     }
 
@@ -129,12 +135,21 @@ public class EventLog {
         }
     }
 
-    /** Compacts events.jsonl to the last MAX_ACTIVE_EVENTS, moving the overflow to .vault-meta/archive/events-YYYY-MM.jsonl — never deletes. */
+    /**
+     * Compacts events.jsonl to ~80% of MAX_ACTIVE_EVENTS (not exactly the cap), moving the
+     * overflow to .vault-meta/archive/events-YYYY-MM.jsonl — never deletes. Trimming below the
+     * cap gives headroom so the next few hundred appends don't immediately re-trigger a full
+     * rotation; only called once activeCount crosses MAX_ACTIVE_EVENTS (see append()).
+     */
     private void rotateIfNeeded() {
         List<Event> all = readAll();
-        if (all.size() <= MAX_ACTIVE_EVENTS) return;
+        if (all.size() <= MAX_ACTIVE_EVENTS) {
+            activeCount.set(all.size());
+            return;
+        }
 
-        int cut = all.size() - MAX_ACTIVE_EVENTS;
+        int keepTarget = (int) (MAX_ACTIVE_EVENTS * 0.8);
+        int cut = all.size() - keepTarget;
         List<Event> overflow = all.subList(0, cut);
         List<Event> keep = all.subList(cut, all.size());
         String month = overflow.get(overflow.size() - 1).ts().substring(0, 7); // YYYY-MM
@@ -150,8 +165,10 @@ public class EventLog {
             for (Event e : keep) activeLines.append(mapper.writeValueAsString(e)).append('\n');
             Files.writeString(eventsFile, activeLines.toString(),
                 StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            activeCount.set(keep.size());
         } catch (IOException e) {
             log.warn("EventLog: rotation failed, active file left over MAX_ACTIVE_EVENTS: {}", e.getMessage());
+            activeCount.set(all.size());
         }
     }
 }

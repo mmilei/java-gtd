@@ -33,6 +33,8 @@ public class TranscriptLog {
     private final Path archiveDir;
     private final ObjectMapper mapper = new ObjectMapper();
     private final AtomicLong idCounter;
+    /** Cheap gate for rotateStaleMonths(): skip the full read/reparse unless the calendar month actually rolled over. */
+    private volatile String lastCheckedMonth;
 
     public TranscriptLog(@Value("${gtd.vault.path}") String vaultPath) {
         Path metaDir = Path.of(vaultPath, ".vault-meta");
@@ -94,10 +96,17 @@ public class TranscriptLog {
         }
     }
 
-    /** Moves any entry from a past calendar month out to its own archive file, keeping only the current month active. */
+    /**
+     * Moves any entry from a past calendar month out to its own archive file, keeping only the
+     * current month active. Gated on lastCheckedMonth so a normal append doesn't re-read/re-parse
+     * the whole active file — the full pass only runs once per calendar month rollover.
+     */
     private void rotateStaleMonths() {
-        List<ChatMessage> all = readAll();
         String currentMonth = Instant.now().toString().substring(0, 7);
+        if (currentMonth.equals(lastCheckedMonth)) return;
+        lastCheckedMonth = currentMonth;
+
+        List<ChatMessage> all = readAll();
         Map<Boolean, List<ChatMessage>> partitioned = all.stream()
             .collect(Collectors.partitioningBy(m -> m.ts().startsWith(currentMonth)));
         List<ChatMessage> keep = partitioned.get(true);
