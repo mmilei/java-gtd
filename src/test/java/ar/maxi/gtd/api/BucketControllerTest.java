@@ -1,6 +1,7 @@
 package ar.maxi.gtd.api;
 
 import ar.maxi.gtd.service.Actor;
+import ar.maxi.gtd.service.LlmProviderService;
 import ar.maxi.gtd.service.MarkdownifyService;
 import ar.maxi.gtd.service.VaultService;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +26,8 @@ class BucketControllerTest {
     @Autowired MockMvc mvc;
     @MockBean VaultService vault;
     @MockBean MarkdownifyService markdownify;
+    // required by GlobalExceptionHandler, which the @WebMvcTest slice also instantiates
+    @MockBean LlmProviderService llmProviders;
 
     private static final String FILE = "20260625-120000-test.md";
 

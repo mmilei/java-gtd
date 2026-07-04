@@ -8,6 +8,8 @@ import ar.maxi.gtd.service.EventLog;
 import ar.maxi.gtd.service.TranscriptLog;
 import ar.maxi.gtd.service.VaultService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,6 +23,8 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api")
 public class ChatController {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatController.class);
 
     private final ClassifierService classifier;
     private final VaultService vault;
@@ -174,7 +178,8 @@ public class ChatController {
                 default       -> Map.of("op", opType, "filed", false, "error", "unknown op: " + opType);
             };
         } catch (Exception e) {
-            return Map.of("op", opType != null ? opType : "unknown", "filed", false, "error", e.getMessage());
+            log.error("dispatch failed for op {}", opType, e);
+            return Map.of("op", opType != null ? opType : "unknown", "filed", false, "error", "internal error processing operation");
         }
     }
 

@@ -3,6 +3,8 @@ package ar.maxi.gtd.api;
 import ar.maxi.gtd.service.Event;
 import ar.maxi.gtd.service.EventLog;
 import ar.maxi.gtd.service.VaultService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +17,8 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api")
 public class UndoController {
+
+    private static final Logger log = LoggerFactory.getLogger(UndoController.class);
 
     private final EventLog eventLog;
     private final VaultService vault;
@@ -40,8 +44,9 @@ public class UndoController {
         try {
             vault.undoEvent(e);
         } catch (Exception ex) {
+            log.error("undo failed for event op={} file={}", e.op(), e.file(), ex);
             return ResponseEntity.internalServerError()
-                .body(Map.of("undone", false, "reason", ex.getMessage()));
+                .body(Map.of("undone", false, "reason", "undo failed"));
         }
         eventLog.append(Event.undoOf(e));
         return ResponseEntity.ok(Map.of(

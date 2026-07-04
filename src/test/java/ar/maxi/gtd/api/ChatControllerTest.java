@@ -5,10 +5,12 @@ import ar.maxi.gtd.service.ChatMessage;
 import ar.maxi.gtd.service.ClassifierService;
 import ar.maxi.gtd.service.ClassifierService.ClassifyResult;
 import ar.maxi.gtd.service.EventLog;
+import ar.maxi.gtd.service.LlmProviderService;
 import ar.maxi.gtd.service.TranscriptLog;
 import ar.maxi.gtd.service.VaultService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -32,6 +34,8 @@ class ChatControllerTest {
     @MockBean VaultService vault;
     @MockBean TranscriptLog transcript;
     @MockBean EventLog eventLog;
+    // required by GlobalExceptionHandler, which the @WebMvcTest slice also instantiates
+    @MockBean LlmProviderService llmProviders;
 
     @BeforeEach
     void setUp() {
@@ -58,6 +62,21 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.ops[0].filed").value(true))
                 .andExpect(jsonPath("$.ops[0].confirmed").value(true));
         verify(vault).write(argThat(m -> !m.containsKey("confirmed")), eq(Actor.LLM));
+    }
+
+    @Test
+    void chatLlmProviderErrorIsClassifiedByGlobalHandler() throws Exception {
+        when(classifier.classifyAll(any(), any())).thenThrow(new NonTransientAiException(
+                "429 - {\"error\":{\"message\":\"Rate limit reached\",\"code\":\"rate_limit_exceeded\"}}"));
+        when(llmProviders.describeAll()).thenReturn(Map.of("active", "GROQ", "providers", List.of()));
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"call the doctor today\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.error").value("RATE_LIMIT"))
+                .andExpect(jsonPath("$.message").isNotEmpty())
+                .andExpect(jsonPath("$.providers.active").value("GROQ"));
     }
 
     @Test

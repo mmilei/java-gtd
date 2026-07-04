@@ -2,6 +2,7 @@ package ar.maxi.gtd.api;
 
 import ar.maxi.gtd.service.Event;
 import ar.maxi.gtd.service.EventLog;
+import ar.maxi.gtd.service.LlmProviderService;
 import ar.maxi.gtd.service.VaultService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,8 @@ class UndoControllerTest {
     @Autowired MockMvc mvc;
     @MockBean EventLog eventLog;
     @MockBean VaultService vault;
+    // required by GlobalExceptionHandler, which the @WebMvcTest slice also instantiates
+    @MockBean LlmProviderService llmProviders;
 
     private static Event mutationEvent(String op, String pathBefore, String pathAfter, String previousContent) {
         return new Event("e-000001", "2026-07-03T12:00:00Z", "user", "mutation", op,

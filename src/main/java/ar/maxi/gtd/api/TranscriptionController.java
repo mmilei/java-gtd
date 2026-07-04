@@ -1,5 +1,7 @@
 package ar.maxi.gtd.api;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.audio.transcription.AudioTranscriptionPrompt;
 import org.springframework.ai.audio.transcription.AudioTranscriptionResponse;
 import org.springframework.ai.openai.OpenAiAudioTranscriptionModel;
@@ -14,6 +16,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 public class TranscriptionController {
+
+    private static final Logger log = LoggerFactory.getLogger(TranscriptionController.class);
 
     private final OpenAiAudioTranscriptionModel transcriptionModel;
 
@@ -42,7 +46,8 @@ public class TranscriptionController {
         } catch (IOException e) {
             return ResponseEntity.internalServerError().body(Map.of("error", "failed to read audio file"));
         } catch (Exception e) {
-            return ResponseEntity.status(502).body(Map.of("error", "transcription failed: " + e.getMessage()));
+            log.error("transcription failed", e);
+            return ResponseEntity.status(502).body(Map.of("error", "transcription failed"));
         }
     }
 }

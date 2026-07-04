@@ -54,7 +54,20 @@ Inspired by [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_D
 | AI integration | Spring AI + OpenAI-compatible APIs |
 | LLM providers | Groq (Llama 3.3-70b) · Ollama (local) |
 | Storage | Obsidian vault (Markdown + YAML frontmatter) |
-| Tests | JUnit 5 · Mockito — 98 tests |
+| Tests | JUnit 5 · Mockito — 109 tests |
+
+## Dependencies
+
+The runtime footprint is deliberately small — four direct dependencies:
+
+| Dependency | Purpose |
+|------------|---------|
+| `spring-boot-starter-web` | REST API layer (controllers, JSON serialization, embedded server) |
+| `spring-ai-openai-spring-boot-starter` | Groq integration via its OpenAI-compatible API, plus Whisper audio transcription |
+| `spring-ai-ollama-spring-boot-starter` | Local LLM fallback (Ollama), enabled through `application-local.properties` |
+| `spring-boot-starter-test` | JUnit 5 + Mockito + AssertJ test stack (test scope only) |
+
+Everything else (vault storage, event log, undo) is plain Java on the filesystem — no database, no message broker.
 
 ## Quick start
 
