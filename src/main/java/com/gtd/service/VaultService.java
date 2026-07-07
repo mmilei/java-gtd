@@ -39,7 +39,7 @@ public class VaultService {
     private final ObjectMapper mapper;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
+    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op", "project");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
     private static final List<String> ALL_BUCKETS = List.of("today", "backlog", "waiting", "someday", "reference");
 
@@ -94,6 +94,13 @@ public class VaultService {
         frontmatter.put("status", "open");
         frontmatter.put("created", LocalDate.now().toString());
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
+        // project is in CLASSIFIER_KEYS (excluded from the generic passthrough below), so it needs
+        // explicit handling here — and doing it explicitly lets us drop blank/null values the LLM
+        // may emit instead of persisting an empty project field.
+        Object projectRaw = item.get("project");
+        if (projectRaw != null && !String.valueOf(projectRaw).isBlank()) {
+            frontmatter.put("project", String.valueOf(projectRaw).strip());
+        }
         List<String> delegados = delegadoAsList(item.get("delegado_a"));
         if (!delegados.isEmpty()) frontmatter.put("delegado_a", delegados);
         List<String> tags = tagsFrom(item);
@@ -172,6 +179,23 @@ public class VaultService {
         return counts;
     }
 
+    /**
+     * Sorted, deduplicated list of the non-blank `project` field values found across all buckets.
+     * Fed to the classifier so it can tag a new task with a project the vault already knows about
+     * instead of guessing blind. Returns an empty list when no item has a project yet — no
+     * invented fallback values, since a bad project name pollutes the field for every later task.
+     */
+    public List<String> knownProjects() {
+        Set<String> projects = new TreeSet<>();
+        listAll().forEach((bucket, items) -> items.forEach(item -> {
+            Object raw = item.get("project");
+            if (raw == null) return;
+            String project = String.valueOf(raw).strip();
+            if (!project.isEmpty()) projects.add(project);
+        }));
+        return new ArrayList<>(projects);
+    }
+
     public void markDone(String filename, Actor actor) {
         mutate(filename, doneDir, actor, "done", item -> {
             item.put("status", "done");
@@ -211,7 +235,7 @@ public class VaultService {
     }
 
     public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed", "project");
         mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             item.put(k, "delegado_a".equals(k) ? delegadoAsList(v) : v);

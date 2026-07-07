@@ -536,6 +536,76 @@ class VaultServiceTest {
     }
 
     @Test
+    void shouldPersistProjectFieldViaPatchMetaAndReadItBack(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Fix the tag tab bug");
+        op.put("tags", new java.util.ArrayList<>(List.of("work")));
+        String filename = vault.write(op, Actor.USER);
+
+        vault.patchMeta(filename, Map.of("project", "frontend-gtd"), Actor.USER);
+
+        assertThat(vault.read(filename).get("project")).isEqualTo("frontend-gtd");
+        assertThat(vault.list("backlog").stream()
+            .filter(m -> filename.equals(m.get("file")))
+            .findFirst().orElseThrow().get("project")).isEqualTo("frontend-gtd");
+    }
+
+    @Test
+    void knownProjectsShouldReturnSortedDeduplicatedNonBlankValuesAcrossBuckets(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> a = new java.util.LinkedHashMap<>();
+        a.put("bucket", "today");
+        a.put("title", "Task A");
+        a.put("project", "java-gtd");
+        vault.write(a, Actor.USER);
+
+        Map<String, Object> b = new java.util.LinkedHashMap<>();
+        b.put("bucket", "backlog");
+        b.put("title", "Task B");
+        b.put("project", "frontend-gtd");
+        vault.write(b, Actor.USER);
+
+        // duplicate project value in another bucket — must be deduplicated
+        Map<String, Object> c = new java.util.LinkedHashMap<>();
+        c.put("bucket", "someday");
+        c.put("title", "Task C");
+        c.put("project", "java-gtd");
+        vault.write(c, Actor.USER);
+
+        // no project field at all — must be ignored, not crash
+        Map<String, Object> d = new java.util.LinkedHashMap<>();
+        d.put("bucket", "backlog");
+        d.put("title", "Task D");
+        vault.write(d, Actor.USER);
+
+        assertThat(vault.knownProjects()).containsExactly("frontend-gtd", "java-gtd");
+    }
+
+    @Test
+    void knownProjectsShouldExcludeBlankProjectValuesAndReturnEmptyWhenNoneExist(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        assertThat(vault.knownProjects()).isEmpty();
+
+        Map<String, Object> blank = new java.util.LinkedHashMap<>();
+        blank.put("bucket", "backlog");
+        blank.put("title", "Blank project");
+        blank.put("project", "   ");
+        vault.write(blank, Actor.USER);
+
+        Map<String, Object> empty = new java.util.LinkedHashMap<>();
+        empty.put("bucket", "backlog");
+        empty.put("title", "Empty project");
+        empty.put("project", "");
+        vault.write(empty, Actor.USER);
+
+        assertThat(vault.knownProjects()).isEmpty();
+    }
+
+    @Test
     void shouldNormalizeDelegadoAToListOnWriteAndPatch(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
 
