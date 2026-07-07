@@ -765,9 +765,7 @@ public class VaultService {
     @SuppressWarnings("unchecked")
     private static List<String> tagsFrom(Map<String, Object> item) {
         Object raw = item.get("tags");
-        List<String> tags = (raw instanceof List<?>) ? new ArrayList<>((List<String>) raw) : new ArrayList<>();
-        if (!tags.contains("gtd")) tags.add(0, "gtd");
-        return tags;
+        return (raw instanceof List<?>) ? new ArrayList<>((List<String>) raw) : new ArrayList<>();
     }
 
     /**
@@ -786,13 +784,18 @@ public class VaultService {
         return List.of();
     }
 
+    /**
+     * `reference` still gets auto-tagged: the bucket determines it structurally, and Bases/
+     * Dataview views over `brain/resources/` filter on it. `action` is deliberately NOT
+     * auto-added here anymore — `type: action` + the bucket folder already say everything the
+     * tag used to say, and the tag bar was hiding it from the UI anyway.
+     */
     private static void normalizeTypeTags(List<String> tags, String bucket) {
         if ("reference".equals(bucket)) {
             tags.remove("action");
             if (!tags.contains("reference")) tags.add("reference");
         } else {
             tags.remove("reference");
-            if (!tags.contains("action")) tags.add("action");
         }
     }
 

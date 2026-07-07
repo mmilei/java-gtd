@@ -112,7 +112,7 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
   "due": "2026-07-03",
   "today_since": "2026-07-02",
   "estimate_minutes": 15,
-  "tags": ["gtd", "action", "health", "calls"],
+  "tags": ["health", "calls"],
   "body": "…",
   "file": "20260702-090000-call-the-dentist.md"
 }

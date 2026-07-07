@@ -15,10 +15,10 @@ Current body: {body}
 - reference: this is reference material, not an action. Structure it with headings, lists, and rich markdown. Prioritize clarity and navigability.
 
 ## Tag inference
-Preserve existing tags. Add any missing context tags. Always include "gtd" and at least one context tag:
+Preserve existing tags. Add any missing context tags:
 purchase/grocery/hardware → "compras" | doctor/health/gym → "salud" | call/message/chat → "llamadas"
 work/code/PR/meeting/deploy → "trabajo" | pay/invoice/bank/tax → "finanzas" | home/kitchen/apartment → "hogar"
 learn/book/course/read → "aprendizaje" | cat/pet → "mascotas"
 
 Respond ONLY with valid JSON, no markdown wrapper or explanation:
-{"body": "...", "tags": ["gtd", ...]}
+{"body": "...", "tags": [...]}

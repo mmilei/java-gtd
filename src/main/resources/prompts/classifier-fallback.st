@@ -10,7 +10,7 @@ Known projects already in the vault (set the create/patch "project" field only w
 Valid buckets: today, backlog, waiting, someday, reference, now, discard
 Valid operations: create, done, update, move, edit, dismiss, patch
 
-For "create": {"op":"create","bucket":"backlog","title":"...","body":"","due":null,"delegado_a":null,"tags":["gtd","action"],"estimate_minutes":null,"project":null}
+For "create": {"op":"create","bucket":"backlog","title":"...","body":"","due":null,"delegado_a":null,"tags":[],"estimate_minutes":null,"project":null}
 For "done":   {"op":"done","target_title":"exact title from open tasks"}
 For "move":   {"op":"move","target_title":"exact title from open tasks","new_bucket":"today","due":null}
 For "update": {"op":"update","target_title":"exact title from open tasks","append":"text to add"}

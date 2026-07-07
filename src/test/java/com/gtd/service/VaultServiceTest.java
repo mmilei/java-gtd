@@ -66,7 +66,7 @@ class VaultServiceTest {
     }
 
     @Test
-    void shouldAddActionTagForNonReferenceItem(@TempDir Path tempDir) throws Exception {
+    void shouldNotAutoAddActionOrGtdTags(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "today");
@@ -76,10 +76,11 @@ class VaultServiceTest {
         String filename = vault.write(op, Actor.USER);
         Map<String, Object> saved = vault.read(filename);
 
+        // type: action + the bucket folder already say this is an action item — the tag no
+        // longer gets force-added on top of that (was pure noise, hidden from the UI anyway).
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) saved.get("tags");
-        assertThat(tags).contains("gtd", "action", "work");
-        assertThat(tags).doesNotContain("reference");
+        assertThat(tags).containsExactly("work");
         assertThat(tempDir.resolve("brain/today").resolve(filename)).exists();
     }
 
@@ -111,9 +112,11 @@ class VaultServiceTest {
         String filename = vault.write(op, Actor.USER);
         Map<String, Object> saved = vault.read(filename);
 
+        // null tags no longer implies forced gtd/action — the item is created fine with an
+        // empty tags list.
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) saved.get("tags");
-        assertThat(tags).contains("gtd", "action");
+        assertThat(tags).isEmpty();
     }
 
     @Test
@@ -497,7 +500,7 @@ class VaultServiceTest {
 
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) moved.get("tags");
-        assertThat(tags).contains("gtd", "reference");
+        assertThat(tags).contains("reference");
         assertThat(tags).doesNotContain("action");
         assertThat(moved.get("type")).isEqualTo("reference");
     }
