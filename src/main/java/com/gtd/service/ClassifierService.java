@@ -25,6 +25,7 @@ public class ClassifierService {
 
     private final LlmProviderService llmProviders;
     private final ObjectMapper objectMapper;
+    private final VaultService vault;
     private final String promptTemplate;
     private final String fallbackTemplate;
     private final String userContext;
@@ -38,6 +39,7 @@ public class ClassifierService {
             @Value("${classifier.template:sample}") String classifierTemplate) {
         this.llmProviders = llmProviders;
         this.objectMapper = objectMapper;
+        this.vault = vault;
         try {
             this.promptTemplate = new ClassPathResource(templateResourcePath(classifierTemplate, false))
                 .getContentAsString(StandardCharsets.UTF_8);
@@ -74,12 +76,15 @@ public class ClassifierService {
     public ClassifyResult classifyAll(String message, List<Map<String, Object>> openTasks) {
         String openTasksJson = serializeTasks(openTasks);
         String today = LocalDate.now().toString();
+        // Read fresh each call — the vault gains projects over time, so this list must not be
+        // cached at startup or the classifier would keep classifying against a stale project set.
+        String knownProjects = formatKnownProjects(vault.knownProjects());
 
         List<Map<String, Object>> ops = null;
         boolean usedFallback = false;
 
         // Level 1
-        String level1 = buildPrompt(promptTemplate, today, openTasksJson, message);
+        String level1 = buildPrompt(promptTemplate, today, userContext, openTasksJson, knownProjects, message);
         String response1 = call(level1);
         try {
             ops = parseJsonList(response1);
@@ -89,7 +94,7 @@ public class ClassifierService {
 
         if (ops == null || allNonFiling(ops)) {
             // Level 2
-            String level2 = buildPrompt(fallbackTemplate, today, openTasksJson, message);
+            String level2 = buildPrompt(fallbackTemplate, today, userContext, openTasksJson, knownProjects, message);
             String response2 = call(level2);
             try {
                 ops = parseJsonList(response2);
@@ -195,12 +200,23 @@ public class ClassifierService {
         });
     }
 
-    private String buildPrompt(String template, String today, String openTasksJson, String message) {
+    /**
+     * Pure placeholder substitution, no IO or state — directly unit-testable (mirrors the
+     * static/testable convention already used by resolveTargetFile and templateResourcePath).
+     */
+    static String buildPrompt(String template, String today, String userContext,
+                              String openTasksJson, String knownProjects, String message) {
         return template
             .replace("{today}", today)
             .replace("{user_context}", userContext)
             .replace("{open_tasks}", openTasksJson)
+            .replace("{known_projects}", knownProjects)
             .replace("{message}", message);
+    }
+
+    /** Comma-separated list for the prompt, or a clear "none yet" marker when the vault has no projects. */
+    static String formatKnownProjects(List<String> projects) {
+        return projects.isEmpty() ? "(none yet)" : String.join(", ", projects);
     }
 
     private String call(String promptText) {

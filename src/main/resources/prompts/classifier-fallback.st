@@ -5,10 +5,12 @@ The previous response failed to parse. Retry with the same message and return a 
 Open tasks (reference for target_title — match by title, never invent a filename):
 {open_tasks}
 
+Known projects already in the vault (set the create/patch "project" field only when the message clearly names one of these, or unambiguously names a new distinct codebase; otherwise null): {known_projects}
+
 Valid buckets: today, backlog, waiting, someday, reference, now, discard
 Valid operations: create, done, update, move, edit, dismiss, patch
 
-For "create": {"op":"create","bucket":"backlog","title":"...","body":"","due":null,"delegado_a":null,"tags":["gtd","action"],"estimate_minutes":null}
+For "create": {"op":"create","bucket":"backlog","title":"...","body":"","due":null,"delegado_a":null,"tags":["gtd","action"],"estimate_minutes":null,"project":null}
 For "done":   {"op":"done","target_title":"exact title from open tasks"}
 For "move":   {"op":"move","target_title":"exact title from open tasks","new_bucket":"today","due":null}
 For "update": {"op":"update","target_title":"exact title from open tasks","append":"text to add"}

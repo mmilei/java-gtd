@@ -6,6 +6,9 @@
 ## Open tasks (filename + title + bucket)
 {open_tasks}
 
+## Known projects
+Projects already present in the vault: {known_projects}
+
 ## Decision tree
 First: does the message have any recognizable semantic content (a real task, real information, a real intent)? If it's noise — keyboard mashing ("asd", "asdf", "qwerty", "jkjk"), random characters, or text that communicates nothing — use discard directly, WITHOUT walking the rest of the tree. Don't file it as backlog just because it has letters and superficially looks like "a new task" — gibberish is not a task.
 
@@ -25,14 +28,15 @@ Is it a concrete action someone can do?
 ## Available operations
 
 1. "create" — new task
-   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or array of names), tags [], estimate_minutes (integer or null), message (only for now/discard)
+   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or array of names), tags [], estimate_minutes (integer or null), project (string or null), message (only for now/discard)
    estimate_minutes: rough effort estimate in whole minutes (5, 15, 30, 60, 120…), ONLY when the duration is reasonably inferable from the task itself ("call the dentist" → 10, "clean the kitchen" → 30). When unsure → null. Never invent precision.
+   project: the specific codebase/project this task belongs to. Only set it if the message clearly identifies a project from the Known projects list above, OR unambiguously names a new distinct project/codebase not yet in that list (e.g. "for the pikon app", "in the frontend-gtd repo"). NEVER invent a project name for generic "work" tasks that don't name a specific codebase. When in doubt → null: a missed project is harmless, a wrong one pollutes the field.
    Tags: always ["gtd"] + at least 1 context tag inferred from the title:
      purchase/grocery/supermarket/store/buy → "shopping" | doctor/health/medicine/appointment/gym/dentist → "health"
      call/whatsapp/message/contact → "calls" | work/meeting/job → "work"
      pay/invoice/bank/tax/subscription → "finances" | home/bathroom/kitchen/apartment/cleaning → "home"
      learn/book/course/read/study → "learning" | cat/dog/pet/vet → "pets"
-     code/PR/endpoint/test/deploy/bug/feature/API/backend/frontend/refactor/fix/build → "work" + "project"
+     code/PR/endpoint/test/deploy/bug/feature/API/backend/frontend/refactor/fix/build → "work" (and set the project field above when a specific codebase is named)
 
 2. "done" — complete or cancel an existing task
    Fields: op, target_title (exact title text from the open tasks list that best matches; null if no clear match)
@@ -55,7 +59,7 @@ Is it a concrete action someone can do?
    Different from "done": done = task completed, dismiss = decided not to do it
 
 7. "patch" — modify tags or dates without changing body or bucket
-   Fields: op, target_title, tags (full array; always include "gtd" and "action"), due (YYYY-MM-DD or null), today_since (YYYY-MM-DD or null)
+   Fields: op, target_title, tags (full array; always include "gtd" and "action"), due (YYYY-MM-DD or null), today_since (YYYY-MM-DD or null), project (string or null — optional, same rules as the create op's project field)
    Use when the user changes metadata: "add the urgent tag", "set date for tomorrow", "remove the health tag"
    Distinction: "move" changes the bucket, "patch" changes only the metadata
 
@@ -77,6 +81,8 @@ Is it a concrete action someone can do?
 - "buy bread" → [{"op":"create","bucket":"backlog","title":"Buy bread","body":"","due":null,"delegado_a":null,"tags":["gtd","action","shopping"],"estimate_minutes":15}]
 - "buy bread for today" → [{"op":"create","bucket":"today","title":"Buy bread","body":"","due":null,"delegado_a":null,"tags":["gtd","action","shopping"]}]
 - "someday learn piano" → [{"op":"create","bucket":"someday","title":"Learn piano","body":"","due":null,"delegado_a":null,"tags":["gtd","action","learning"]}]
+- "fix the tab bug in the gtd-frontend tags" → [{"op":"create","bucket":"backlog","title":"Fix tab bug in the tags","body":"","due":null,"delegado_a":null,"tags":["gtd","action","work"],"project":"frontend-gtd"}]
+- "I have to answer some work emails" → [{"op":"create","bucket":"backlog","title":"Answer work emails","body":"","due":null,"delegado_a":null,"tags":["gtd","action","work"],"project":null}]
 - "yesterday's meeting went well, take note" → [{"op":"create","bucket":"reference","title":"Yesterday's meeting","body":"The meeting went well","due":null,"delegado_a":null,"tags":["gtd","reference","work"]}]
 - open tasks include {"file":"20260601-1-buy-bread.md","title":"Buy bread","bucket":"backlog"}; message "mark buy bread as done" → [{"op":"done","target_title":"Buy bread"}]
 - open tasks include {"file":"20260601-2-old-idea.md","title":"Old idea","bucket":"someday"}; message "discard the old idea task" → [{"op":"dismiss","target_title":"Old idea"}]

@@ -115,6 +115,25 @@ class ClassifierServiceTest {
     }
 
     @Test
+    void buildPromptSubstitutesKnownProjectsPlaceholder() {
+        String template = "today={today} ctx={user_context} tasks={open_tasks} projects={known_projects} msg={message}";
+        String result = ClassifierService.buildPrompt(
+                template, "2026-07-07", "profile", "[]", "java-gtd, frontend-gtd", "fix the bug");
+        assertThat(result).isEqualTo(
+                "today=2026-07-07 ctx=profile tasks=[] projects=java-gtd, frontend-gtd msg=fix the bug");
+        assertThat(result).doesNotContain("{known_projects}");
+    }
+
+    @Test
+    void formatKnownProjectsJoinsWithCommasOrMarksNoneYet() {
+        assertThat(ClassifierService.formatKnownProjects(List.of())).isEqualTo("(none yet)");
+        assertThat(ClassifierService.formatKnownProjects(List.of("java-gtd")))
+                .isEqualTo("java-gtd");
+        assertThat(ClassifierService.formatKnownProjects(List.of("java-gtd", "frontend-gtd")))
+                .isEqualTo("java-gtd, frontend-gtd");
+    }
+
+    @Test
     void legacyTargetFileTrustedOnlyWhenVerifiedPresent() {
         Map<String, Object> validLegacy = new HashMap<>();
         validLegacy.put("op", "done");
