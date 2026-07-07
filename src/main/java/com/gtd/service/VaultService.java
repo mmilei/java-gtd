@@ -180,20 +180,33 @@ public class VaultService {
     }
 
     /**
-     * Sorted, deduplicated list of the non-blank `project` field values found across all buckets.
+     * Sorted, deduplicated list of the non-blank `project` field values found across all buckets,
+     * including done/discarded tasks — an established project shouldn't drop out of the classifier's
+     * known-projects context just because its tasks are finished; that's exactly when continuity
+     * (recognizing the same project on the next task) matters most.
      * Fed to the classifier so it can tag a new task with a project the vault already knows about
      * instead of guessing blind. Returns an empty list when no item has a project yet — no
      * invented fallback values, since a bad project name pollutes the field for every later task.
      */
     public List<String> knownProjects() {
         Set<String> projects = new TreeSet<>();
-        listAll().forEach((bucket, items) -> items.forEach(item -> {
-            Object raw = item.get("project");
-            if (raw == null) return;
-            String project = String.valueOf(raw).strip();
-            if (!project.isEmpty()) projects.add(project);
-        }));
+        listAll().forEach((bucket, items) -> items.forEach(item -> addProject(projects, item)));
+        for (Path dir : List.of(doneDir, discardDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md"))
+                     .map(this::readFile)
+                     .filter(Objects::nonNull)
+                     .forEach(item -> addProject(projects, item));
+            } catch (IOException e) { /* empty directory, skip */ }
+        }
         return new ArrayList<>(projects);
+    }
+
+    private static void addProject(Set<String> projects, Map<String, Object> item) {
+        Object raw = item.get("project");
+        if (raw == null) return;
+        String project = String.valueOf(raw).strip();
+        if (!project.isEmpty()) projects.add(project);
     }
 
     public void markDone(String filename, Actor actor) {

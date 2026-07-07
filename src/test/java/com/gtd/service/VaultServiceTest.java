@@ -606,6 +606,29 @@ class VaultServiceTest {
     }
 
     @Test
+    void knownProjectsShouldIncludeProjectsFromDoneAndDiscardedTasks(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> done = new java.util.LinkedHashMap<>();
+        done.put("bucket", "today");
+        done.put("title", "Ship the release");
+        done.put("project", "java-gtd");
+        String doneFilename = vault.write(done, Actor.USER);
+        vault.markDone(doneFilename, Actor.USER);
+
+        Map<String, Object> discarded = new java.util.LinkedHashMap<>();
+        discarded.put("bucket", "backlog");
+        discarded.put("title", "Abandoned spike");
+        discarded.put("project", "frontend-gtd");
+        String discardedFilename = vault.write(discarded, Actor.USER);
+        vault.dismissItem(discardedFilename, Actor.USER);
+
+        // an established project shouldn't disappear from the known-projects context just
+        // because every one of its tasks is finished or dropped
+        assertThat(vault.knownProjects()).containsExactly("frontend-gtd", "java-gtd");
+    }
+
+    @Test
     void shouldNormalizeDelegadoAToListOnWriteAndPatch(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
 
