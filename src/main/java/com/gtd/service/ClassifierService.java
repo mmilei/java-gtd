@@ -14,6 +14,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,6 +32,10 @@ public class ClassifierService {
     private final String userContext;
 
     private static final Set<String> NON_FILING_BUCKETS = Set.of("now", "discard");
+    // Cap on how many open tasks are sent to the LLM as context on each classify request. Runs
+    // before serializeTasks()'s coarse 6000-char/80-item safety net — keyword pre-filtering keeps
+    // the task the user is actually referring to in context instead of relying on list order.
+    private static final int RELEVANT_TASK_LIMIT = 15;
 
     public ClassifierService(
             LlmProviderService llmProviders,
@@ -74,7 +79,10 @@ public class ClassifierService {
      * Level 1 → lightweight prompt. If parsing fails or all ops are now/discard → Level 2.
      */
     public ClassifyResult classifyAll(String message, List<Map<String, Object>> openTasks) {
-        String openTasksJson = serializeTasks(openTasks);
+        // Pre-filter to the tasks most likely relevant to this message before serializing — trims
+        // the token budget while keeping the target task (for done/edit/move/dismiss ops) in context.
+        List<Map<String, Object>> relevantTasks = filterRelevantTasks(openTasks, message, RELEVANT_TASK_LIMIT);
+        String openTasksJson = serializeTasks(relevantTasks);
         String today = LocalDate.now().toString();
         // Read fresh each call — the vault gains projects over time, so this list must not be
         // cached at startup or the classifier would keep classifying against a stale project set.
@@ -217,6 +225,53 @@ public class ClassifierService {
     /** Comma-separated list for the prompt, or a clear "none yet" marker when the vault has no projects. */
     static String formatKnownProjects(List<String> projects) {
         return projects.isEmpty() ? "(none yet)" : String.join(", ", projects);
+    }
+
+    /**
+     * Pre-filters the open-tasks context sent to the LLM down to the `limit` most relevant tasks,
+     * scored by word-overlap between the message and each task's title. Pure, no dependencies —
+     * directly unit-testable, same convention as resolveTargetFile/buildPrompt/formatKnownProjects.
+     *
+     * When the vault is small (tasks.size() <= limit) the whole list passes through untouched.
+     * Above that, each task is scored by how many message tokens appear in its title tokens, and
+     * the top `limit` by score are kept. Crucially, if NO task shares any word with the message —
+     * the common case for a plain `create` that isn't targeting an existing task — we fall back to
+     * the first `limit` in original order rather than an arbitrary/empty-looking selection: a
+     * done/edit/move/dismiss op needs its target task's title present to resolve, so we must never
+     * drop the referenced task just because the user's wording diverges slightly from the title.
+     */
+    static List<Map<String, Object>> filterRelevantTasks(List<Map<String, Object>> tasks, String message, int limit) {
+        if (tasks.size() <= limit) return tasks;
+
+        Set<String> messageTokens = tokenize(message);
+        List<Map<String, Object>> ranked = tasks.stream()
+            .sorted(Comparator.comparingInt(
+                (Map<String, Object> t) -> overlapScore(messageTokens, t)).reversed())
+            .toList();
+
+        // All-zero overlap → keep original order (see javadoc) instead of an arbitrary reshuffle.
+        boolean anyOverlap = ranked.stream().anyMatch(t -> overlapScore(messageTokens, t) > 0);
+        List<Map<String, Object>> source = anyOverlap ? ranked : tasks;
+        return source.subList(0, limit);
+    }
+
+    private static int overlapScore(Set<String> messageTokens, Map<String, Object> task) {
+        Object title = task.get("title");
+        if (title == null) return 0;
+        int score = 0;
+        for (String token : tokenize(String.valueOf(title))) {
+            if (messageTokens.contains(token)) score++;
+        }
+        return score;
+    }
+
+    /** Lowercase, split on non-word characters, drop empties — shared by the message and titles. */
+    private static Set<String> tokenize(String s) {
+        Set<String> tokens = new java.util.HashSet<>();
+        for (String token : s.toLowerCase().split("\\W+")) {
+            if (!token.isBlank()) tokens.add(token);
+        }
+        return tokens;
     }
 
     private String call(String promptText) {

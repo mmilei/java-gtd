@@ -134,6 +134,48 @@ class ClassifierServiceTest {
     }
 
     @Test
+    void filterRelevantTasksShouldPrioritizeTitleKeywordOverlap() {
+        List<Map<String, Object>> tasks = List.of(
+                Map.of("file", "1.md", "title", "Buy bread", "bucket", "backlog"),
+                Map.of("file", "2.md", "title", "Buy milk", "bucket", "backlog"),
+                Map.of("file", "3.md", "title", "Fix the deploy pipeline", "bucket", "backlog"),
+                Map.of("file", "4.md", "title", "Call the dentist", "bucket", "today")
+        );
+
+        // message clearly overlaps the deploy task — it must come first, within the limit
+        List<Map<String, Object>> filtered =
+                ClassifierService.filterRelevantTasks(tasks, "the deploy pipeline is broken again", 2);
+        assertThat(filtered).hasSize(2);
+        assertThat(filtered.get(0).get("title")).isEqualTo("Fix the deploy pipeline");
+    }
+
+    @Test
+    void filterRelevantTasksShouldReturnAllWhenUnderLimit() {
+        List<Map<String, Object>> tasks = List.of(
+                Map.of("file", "1.md", "title", "Buy bread", "bucket", "backlog"),
+                Map.of("file", "2.md", "title", "Buy milk", "bucket", "backlog")
+        );
+        // fewer tasks than the limit → passed through untouched, no filtering/reordering
+        assertThat(ClassifierService.filterRelevantTasks(tasks, "anything at all", 5)).isEqualTo(tasks);
+    }
+
+    @Test
+    void filterRelevantTasksShouldFallBackToOriginalOrderWhenNoOverlap() {
+        List<Map<String, Object>> tasks = List.of(
+                Map.of("file", "1.md", "title", "Buy bread", "bucket", "backlog"),
+                Map.of("file", "2.md", "title", "Buy milk", "bucket", "backlog"),
+                Map.of("file", "3.md", "title", "Call the dentist", "bucket", "today")
+        );
+        // a plain create sharing no word with any title → keep the first `limit` in original order,
+        // never an arbitrary/empty-looking selection that could drop a would-be target task
+        List<Map<String, Object>> filtered =
+                ClassifierService.filterRelevantTasks(tasks, "comprar entradas para el recital", 2);
+        assertThat(filtered).hasSize(2);
+        assertThat(filtered.get(0).get("file")).isEqualTo("1.md");
+        assertThat(filtered.get(1).get("file")).isEqualTo("2.md");
+    }
+
+    @Test
     void legacyTargetFileTrustedOnlyWhenVerifiedPresent() {
         Map<String, Object> validLegacy = new HashMap<>();
         validLegacy.put("op", "done");
