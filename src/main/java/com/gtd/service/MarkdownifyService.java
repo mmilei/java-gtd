@@ -59,11 +59,11 @@ public class MarkdownifyService {
             Map<String, Object> result = objectMapper.readValue(json, new TypeReference<>() {});
             String newBody = (String) result.getOrDefault("body", body);
             @SuppressWarnings("unchecked")
-            List<String> newTags = (List<String>) result.getOrDefault("tags", List.of("gtd"));
+            List<String> newTags = (List<String>) result.getOrDefault("tags", List.of());
             return new EnrichResult(newBody, newTags);
         } catch (Exception e) {
             log.error("markdownify: failed to parse LLM response: {}", e.getMessage());
-            return new EnrichResult(body, List.of("gtd"));
+            return new EnrichResult(body, List.of());
         }
     }
 }

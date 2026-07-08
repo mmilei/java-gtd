@@ -66,7 +66,7 @@ class VaultServiceTest {
     }
 
     @Test
-    void shouldAddActionTagForNonReferenceItem(@TempDir Path tempDir) throws Exception {
+    void shouldNotAutoAddActionOrGtdTags(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "today");
@@ -76,10 +76,11 @@ class VaultServiceTest {
         String filename = vault.write(op, Actor.USER);
         Map<String, Object> saved = vault.read(filename);
 
+        // type: action + the bucket folder already say this is an action item — the tag no
+        // longer gets force-added on top of that (was pure noise, hidden from the UI anyway).
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) saved.get("tags");
-        assertThat(tags).contains("gtd", "action", "work");
-        assertThat(tags).doesNotContain("reference");
+        assertThat(tags).containsExactly("work");
         assertThat(tempDir.resolve("brain/today").resolve(filename)).exists();
     }
 
@@ -111,9 +112,11 @@ class VaultServiceTest {
         String filename = vault.write(op, Actor.USER);
         Map<String, Object> saved = vault.read(filename);
 
+        // null tags no longer implies forced gtd/action — the item is created fine with an
+        // empty tags list.
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) saved.get("tags");
-        assertThat(tags).contains("gtd", "action");
+        assertThat(tags).isEmpty();
     }
 
     @Test
@@ -497,7 +500,7 @@ class VaultServiceTest {
 
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) moved.get("tags");
-        assertThat(tags).contains("gtd", "reference");
+        assertThat(tags).contains("reference");
         assertThat(tags).doesNotContain("action");
         assertThat(moved.get("type")).isEqualTo("reference");
     }
@@ -533,6 +536,99 @@ class VaultServiceTest {
             .containsEntry("someday", 0)
             .containsEntry("reference", 0);
         assertThat(counts.get("urgent")).containsEntry("backlog", 1);
+    }
+
+    @Test
+    void shouldPersistProjectFieldViaPatchMetaAndReadItBack(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Fix the tag tab bug");
+        op.put("tags", new java.util.ArrayList<>(List.of("work")));
+        String filename = vault.write(op, Actor.USER);
+
+        vault.patchMeta(filename, Map.of("project", "frontend-gtd"), Actor.USER);
+
+        assertThat(vault.read(filename).get("project")).isEqualTo("frontend-gtd");
+        assertThat(vault.list("backlog").stream()
+            .filter(m -> filename.equals(m.get("file")))
+            .findFirst().orElseThrow().get("project")).isEqualTo("frontend-gtd");
+    }
+
+    @Test
+    void knownProjectsShouldReturnSortedDeduplicatedNonBlankValuesAcrossBuckets(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> a = new java.util.LinkedHashMap<>();
+        a.put("bucket", "today");
+        a.put("title", "Task A");
+        a.put("project", "java-gtd");
+        vault.write(a, Actor.USER);
+
+        Map<String, Object> b = new java.util.LinkedHashMap<>();
+        b.put("bucket", "backlog");
+        b.put("title", "Task B");
+        b.put("project", "frontend-gtd");
+        vault.write(b, Actor.USER);
+
+        // duplicate project value in another bucket — must be deduplicated
+        Map<String, Object> c = new java.util.LinkedHashMap<>();
+        c.put("bucket", "someday");
+        c.put("title", "Task C");
+        c.put("project", "java-gtd");
+        vault.write(c, Actor.USER);
+
+        // no project field at all — must be ignored, not crash
+        Map<String, Object> d = new java.util.LinkedHashMap<>();
+        d.put("bucket", "backlog");
+        d.put("title", "Task D");
+        vault.write(d, Actor.USER);
+
+        assertThat(vault.knownProjects()).containsExactly("frontend-gtd", "java-gtd");
+    }
+
+    @Test
+    void knownProjectsShouldExcludeBlankProjectValuesAndReturnEmptyWhenNoneExist(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        assertThat(vault.knownProjects()).isEmpty();
+
+        Map<String, Object> blank = new java.util.LinkedHashMap<>();
+        blank.put("bucket", "backlog");
+        blank.put("title", "Blank project");
+        blank.put("project", "   ");
+        vault.write(blank, Actor.USER);
+
+        Map<String, Object> empty = new java.util.LinkedHashMap<>();
+        empty.put("bucket", "backlog");
+        empty.put("title", "Empty project");
+        empty.put("project", "");
+        vault.write(empty, Actor.USER);
+
+        assertThat(vault.knownProjects()).isEmpty();
+    }
+
+    @Test
+    void knownProjectsShouldIncludeProjectsFromDoneAndDiscardedTasks(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> done = new java.util.LinkedHashMap<>();
+        done.put("bucket", "today");
+        done.put("title", "Ship the release");
+        done.put("project", "java-gtd");
+        String doneFilename = vault.write(done, Actor.USER);
+        vault.markDone(doneFilename, Actor.USER);
+
+        Map<String, Object> discarded = new java.util.LinkedHashMap<>();
+        discarded.put("bucket", "backlog");
+        discarded.put("title", "Abandoned spike");
+        discarded.put("project", "frontend-gtd");
+        String discardedFilename = vault.write(discarded, Actor.USER);
+        vault.dismissItem(discardedFilename, Actor.USER);
+
+        // an established project shouldn't disappear from the known-projects context just
+        // because every one of its tasks is finished or dropped
+        assertThat(vault.knownProjects()).containsExactly("frontend-gtd", "java-gtd");
     }
 
     @Test

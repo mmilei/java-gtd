@@ -100,7 +100,7 @@ created: 2026-07-02
 due: 2026-07-03
 today_since: 2026-07-02
 estimate_minutes: 15
-tags: [gtd, action, health, calls]
+tags: [health, calls]
 ---
 
 Optional free-form Markdown body.

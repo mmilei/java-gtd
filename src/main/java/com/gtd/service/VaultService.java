@@ -39,7 +39,7 @@ public class VaultService {
     private final ObjectMapper mapper;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op");
+    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op", "project");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
     private static final List<String> ALL_BUCKETS = List.of("today", "backlog", "waiting", "someday", "reference");
 
@@ -94,6 +94,13 @@ public class VaultService {
         frontmatter.put("status", "open");
         frontmatter.put("created", LocalDate.now().toString());
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
+        // project is in CLASSIFIER_KEYS (excluded from the generic passthrough below), so it needs
+        // explicit handling here — and doing it explicitly lets us drop blank/null values the LLM
+        // may emit instead of persisting an empty project field.
+        Object projectRaw = item.get("project");
+        if (projectRaw != null && !String.valueOf(projectRaw).isBlank()) {
+            frontmatter.put("project", String.valueOf(projectRaw).strip());
+        }
         List<String> delegados = delegadoAsList(item.get("delegado_a"));
         if (!delegados.isEmpty()) frontmatter.put("delegado_a", delegados);
         List<String> tags = tagsFrom(item);
@@ -172,6 +179,36 @@ public class VaultService {
         return counts;
     }
 
+    /**
+     * Sorted, deduplicated list of the non-blank `project` field values found across all buckets,
+     * including done/discarded tasks — an established project shouldn't drop out of the classifier's
+     * known-projects context just because its tasks are finished; that's exactly when continuity
+     * (recognizing the same project on the next task) matters most.
+     * Fed to the classifier so it can tag a new task with a project the vault already knows about
+     * instead of guessing blind. Returns an empty list when no item has a project yet — no
+     * invented fallback values, since a bad project name pollutes the field for every later task.
+     */
+    public List<String> knownProjects() {
+        Set<String> projects = new TreeSet<>();
+        listAll().forEach((bucket, items) -> items.forEach(item -> addProject(projects, item)));
+        for (Path dir : List.of(doneDir, discardDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md"))
+                     .map(this::readFile)
+                     .filter(Objects::nonNull)
+                     .forEach(item -> addProject(projects, item));
+            } catch (IOException e) { /* empty directory, skip */ }
+        }
+        return new ArrayList<>(projects);
+    }
+
+    private static void addProject(Set<String> projects, Map<String, Object> item) {
+        Object raw = item.get("project");
+        if (raw == null) return;
+        String project = String.valueOf(raw).strip();
+        if (!project.isEmpty()) projects.add(project);
+    }
+
     public void markDone(String filename, Actor actor) {
         mutate(filename, doneDir, actor, "done", item -> {
             item.put("status", "done");
@@ -211,7 +248,7 @@ public class VaultService {
     }
 
     public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed", "project");
         mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             item.put(k, "delegado_a".equals(k) ? delegadoAsList(v) : v);
@@ -728,9 +765,7 @@ public class VaultService {
     @SuppressWarnings("unchecked")
     private static List<String> tagsFrom(Map<String, Object> item) {
         Object raw = item.get("tags");
-        List<String> tags = (raw instanceof List<?>) ? new ArrayList<>((List<String>) raw) : new ArrayList<>();
-        if (!tags.contains("gtd")) tags.add(0, "gtd");
-        return tags;
+        return (raw instanceof List<?>) ? new ArrayList<>((List<String>) raw) : new ArrayList<>();
     }
 
     /**
@@ -749,13 +784,18 @@ public class VaultService {
         return List.of();
     }
 
+    /**
+     * `reference` still gets auto-tagged: the bucket determines it structurally, and Bases/
+     * Dataview views over `brain/resources/` filter on it. `action` is deliberately NOT
+     * auto-added here anymore — `type: action` + the bucket folder already say everything the
+     * tag used to say, and the tag bar was hiding it from the UI anyway.
+     */
     private static void normalizeTypeTags(List<String> tags, String bucket) {
         if ("reference".equals(bucket)) {
             tags.remove("action");
             if (!tags.contains("reference")) tags.add("reference");
         } else {
             tags.remove("reference");
-            if (!tags.contains("action")) tags.add("action");
         }
     }
 
