@@ -96,7 +96,7 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 | `POST` | `/api/items/{filename}/dismiss` | Discard (decided not to do it), move to `brain/discard/` |
 | `POST` | `/api/items/{filename}/move` | Reclassify — `{ "bucket": "...", "due": "YYYY-MM-DD" }` |
 | `PUT` | `/api/items/{filename}/body` | Replace body — `{ "body": "..." }` |
-| `PUT` | `/api/items/{filename}/meta` | Update metadata — any of `title`, `tags`, `due`, `today_since`, `delegado_a`, `area`, `estimate_minutes`, `confirmed` |
+| `PUT` | `/api/items/{filename}/meta` | Update metadata — any of `title`, `tags`, `due`, `today_since`, `delegado_a`, `area`, `estimate_minutes`, `confirmed`, `project`, `location` |
 | `POST` | `/api/items/{filename}/confirm` | Flip a low-confidence task's `confirmed: false` → `true` after review |
 | `POST` | `/api/undo` | Undo the most recent mutation, durable and restart-safe (`EventLog`-backed, cap 50) |
 
