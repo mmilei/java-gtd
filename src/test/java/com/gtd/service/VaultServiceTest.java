@@ -556,6 +556,58 @@ class VaultServiceTest {
     }
 
     @Test
+    void shouldPersistLocationFieldViaPatchMetaAndReadItBack(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Buy 8mm screws");
+        op.put("tags", new java.util.ArrayList<>(List.of("shopping")));
+        String filename = vault.write(op, Actor.USER);
+
+        vault.patchMeta(filename, Map.of("location", "ferretería"), Actor.USER);
+
+        assertThat(vault.read(filename).get("location")).isEqualTo("ferretería");
+        assertThat(vault.list("backlog").stream()
+            .filter(m -> filename.equals(m.get("file")))
+            .findFirst().orElseThrow().get("location")).isEqualTo("ferretería");
+    }
+
+    @Test
+    void shouldPersistAreaFieldWhenValidAndDropInvalidValues(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        // valid area (member of the closed vocabulary) persists via patchMeta
+        Map<String, Object> valid = new java.util.LinkedHashMap<>();
+        valid.put("bucket", "backlog");
+        valid.put("title", "Go to the gym");
+        String validFile = vault.write(valid, Actor.USER);
+        vault.patchMeta(validFile, Map.of("area", "ejercicio"), Actor.USER);
+        assertThat(vault.read(validFile).get("area")).isEqualTo("ejercicio");
+
+        // invalid area is silently dropped — no exception, field stays unset
+        Map<String, Object> invalid = new java.util.LinkedHashMap<>();
+        invalid.put("bucket", "backlog");
+        invalid.put("title", "Something else");
+        String invalidFile = vault.write(invalid, Actor.USER);
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() ->
+            vault.patchMeta(invalidFile, Map.of("area", "not-a-real-area"), Actor.USER));
+        assertThat(vault.read(invalidFile)).doesNotContainKey("area");
+
+        // same validation applies on write(): a valid area is kept, an invalid one never lands
+        Map<String, Object> validOnWrite = new java.util.LinkedHashMap<>();
+        validOnWrite.put("bucket", "backlog");
+        validOnWrite.put("title", "See friends");
+        validOnWrite.put("area", "AMISTAD"); // also verifies case-insensitive normalization
+        assertThat(vault.read(vault.write(validOnWrite, Actor.USER)).get("area")).isEqualTo("amistad");
+
+        Map<String, Object> invalidOnWrite = new java.util.LinkedHashMap<>();
+        invalidOnWrite.put("bucket", "backlog");
+        invalidOnWrite.put("title", "No area here");
+        invalidOnWrite.put("area", "bogus");
+        assertThat(vault.read(vault.write(invalidOnWrite, Actor.USER))).doesNotContainKey("area");
+    }
+
+    @Test
     void knownProjectsShouldReturnSortedDeduplicatedNonBlankValuesAcrossBuckets(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
 
