@@ -115,13 +115,14 @@ class ClassifierServiceTest {
     }
 
     @Test
-    void buildPromptSubstitutesKnownProjectsPlaceholder() {
-        String template = "today={today} ctx={user_context} tasks={open_tasks} projects={known_projects} msg={message}";
+    void buildPromptSubstitutesKnownProjectsAndValidAreasPlaceholders() {
+        String template = "today={today} ctx={user_context} tasks={open_tasks} projects={known_projects} areas={valid_areas} msg={message}";
         String result = ClassifierService.buildPrompt(
-                template, "2026-07-07", "profile", "[]", "java-gtd, frontend-gtd", "fix the bug");
+                template, "2026-07-07", "profile", "[]", "java-gtd, frontend-gtd", "personal, friends", "fix the bug");
         assertThat(result).isEqualTo(
-                "today=2026-07-07 ctx=profile tasks=[] projects=java-gtd, frontend-gtd msg=fix the bug");
+                "today=2026-07-07 ctx=profile tasks=[] projects=java-gtd, frontend-gtd areas=personal, friends msg=fix the bug");
         assertThat(result).doesNotContain("{known_projects}");
+        assertThat(result).doesNotContain("{valid_areas}");
     }
 
     @Test
@@ -173,6 +174,40 @@ class ClassifierServiceTest {
         assertThat(filtered).hasSize(2);
         assertThat(filtered.get(0).get("file")).isEqualTo("1.md");
         assertThat(filtered.get(1).get("file")).isEqualTo("2.md");
+    }
+
+    @Test
+    void filterRelevantTasksShouldMatchAccentInsensitively() {
+        // Same bug class resolveTargetFile already fixed once ("verificacion" vs "Verificación"):
+        // an accented title must overlap its unaccented paraphrase, or the pre-filter would evict
+        // exactly the task the user is referring to.
+        List<Map<String, Object>> tasks = List.of(
+                Map.of("file", "1.md", "title", "Buy bread", "bucket", "backlog"),
+                Map.of("file", "2.md", "title", "Buy milk", "bucket", "backlog"),
+                Map.of("file", "3.md", "title", "Comprar colchón para papá", "bucket", "backlog"),
+                Map.of("file", "4.md", "title", "Call the dentist", "bucket", "today")
+        );
+        List<Map<String, Object>> filtered =
+                ClassifierService.filterRelevantTasks(tasks, "marca como hecho lo del colchon de papa", 2);
+        assertThat(filtered.get(0).get("file")).isEqualTo("3.md");
+    }
+
+    @Test
+    void filterRelevantTasksShouldPadWithOriginalOrderWhenFewMatches() {
+        // A single incidental keyword match must not evict every non-matching task: the remaining
+        // slots are padded in original order so a would-be target task stays in context.
+        List<Map<String, Object>> tasks = List.of(
+                Map.of("file", "1.md", "title", "Buy bread", "bucket", "backlog"),
+                Map.of("file", "2.md", "title", "Buy milk", "bucket", "backlog"),
+                Map.of("file", "3.md", "title", "Call the dentist", "bucket", "today"),
+                Map.of("file", "4.md", "title", "Fix the deploy pipeline", "bucket", "backlog")
+        );
+        List<Map<String, Object>> filtered =
+                ClassifierService.filterRelevantTasks(tasks, "deploy something new", 3);
+        assertThat(filtered).hasSize(3);
+        assertThat(filtered.get(0).get("file")).isEqualTo("4.md"); // the only keyword match, first
+        assertThat(filtered.get(1).get("file")).isEqualTo("1.md"); // then original order
+        assertThat(filtered.get(2).get("file")).isEqualTo("2.md");
     }
 
     @Test

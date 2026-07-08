@@ -11,8 +11,8 @@ Valid buckets: today, backlog, waiting, someday, reference, now, discard
 Valid operations: create, done, update, move, edit, dismiss, patch
 
 body: a brief distillation of any detail in the message not already in title/tags/due/project/location/area — in your own words, not the raw message verbatim; "" when the message is a bare title.
-location: the physical place implied by the message (ferretería, súper/almacén, farmacia, banco, veterinaria…), inferred from the task's verb/object, ONLY if reasonably clear; otherwise null.
-area: exactly one of personal, amistad, ejercicio, trabajo, salud, finanzas, hogar, aprendizaje — SOLO si corresponde claramente, ante la duda → null.
+location: the physical place implied by the message (hardware store, supermarket, pharmacy, bank, vet…), inferred from the task's verb/object, ONLY if reasonably clear; otherwise null.
+area: exactly one of {valid_areas} — ONLY when the task clearly matches one, when in doubt → null.
 
 For "create": {"op":"create","bucket":"backlog","title":"...","body":"","due":null,"delegado_a":null,"tags":[],"estimate_minutes":null,"project":null,"location":null,"area":null}
 For "done":   {"op":"done","target_title":"exact title from open tasks"}
@@ -22,8 +22,8 @@ For "edit":   {"op":"edit","target_title":"exact title from open tasks","new_bod
 For "dismiss": {"op":"dismiss","target_title":"exact title from open tasks"}
 
 Examples with location/area/body:
-- "buy 8mm screws" → [{"op":"create","bucket":"backlog","title":"Buy 8mm screws","body":"","due":null,"delegado_a":null,"tags":["shopping"],"location":"ferretería","area":"hogar"}]
-- "go to the gym" → [{"op":"create","bucket":"backlog","title":"Go to the gym","body":"","due":null,"delegado_a":null,"tags":["health"],"area":"ejercicio"}]
+- "buy 8mm screws" → [{"op":"create","bucket":"backlog","title":"Buy 8mm screws","body":"","due":null,"delegado_a":null,"tags":["shopping"],"location":"hardware store","area":"home"}]
+- "go to the gym" → [{"op":"create","bucket":"backlog","title":"Go to the gym","body":"","due":null,"delegado_a":null,"tags":["health"],"area":"exercise"}]
 
 CRITICAL: "edit", "update", "done", "dismiss" ONLY apply to EXISTING TASKS by title.
 If the user refers to a code file, system, config, or API → use "create".
