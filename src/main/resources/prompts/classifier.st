@@ -28,9 +28,12 @@ Is it a concrete action someone can do?
 ## Available operations
 
 1. "create" — new task
-   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or array of names), tags [], estimate_minutes (integer or null), project (string or null), message (only for now/discard)
+   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), delegado_a (null or array of names), tags [], estimate_minutes (integer or null), project (string or null), location (string or null), area (string or null), message (only for now/discard)
+   body: whatever descriptive detail the message carries that isn't already captured by title/tags/due/project/location/area — a brief distillation in your own words, NOT the raw message copied verbatim. When the message is just a bare title with no extra detail → "".
    estimate_minutes: rough effort estimate in whole minutes (5, 15, 30, 60, 120…), ONLY when the duration is reasonably inferable from the task itself ("call the dentist" → 10, "clean the kitchen" → 30). When unsure → null. Never invent precision.
    project: the specific codebase/project this task belongs to. Only set it if the message clearly identifies a project from the Known projects list above, OR unambiguously names a new distinct project/codebase not yet in that list (e.g. "for the pikon app", "in the frontend-gtd repo"). NEVER invent a project name for generic "work" tasks that don't name a specific codebase. When in doubt → null: a missed project is harmless, a wrong one pollutes the field.
+   location: el lugar físico implícito en el mensaje (ferretería, súper/almacén, farmacia, banco, veterinaria, etc.), inferilo del verbo/objeto de la tarea, SOLO si es razonablemente claro — ante la duda, null.
+   area: the life area this task belongs to. ONE of exactly: personal, amistad, ejercicio, trabajo, salud, finanzas, hogar, aprendizaje. Set it SOLO si corresponde claramente a una de estas, ante la duda → null.
    Tags: at least 1 context tag inferred from the title:
      purchase/grocery/supermarket/store/buy → "shopping" | doctor/health/medicine/appointment/gym/dentist → "health"
      call/whatsapp/message/contact → "calls" | work/meeting/job → "work"
@@ -59,7 +62,7 @@ Is it a concrete action someone can do?
    Different from "done": done = task completed, dismiss = decided not to do it
 
 7. "patch" — modify tags or dates without changing body or bucket
-   Fields: op, target_title, tags (full array of context tags), due (YYYY-MM-DD or null), today_since (YYYY-MM-DD or null), project (string or null — optional, same rules as the create op's project field)
+   Fields: op, target_title, tags (full array of context tags), due (YYYY-MM-DD or null), today_since (YYYY-MM-DD or null), project (string or null — optional, same rules as the create op's project field), location (string or null — optional, same rules as the create op's location field), area (string or null — optional, one of: personal, amistad, ejercicio, trabajo, salud, finanzas, hogar, aprendizaje; same rules as the create op's area field)
    Use when the user changes metadata: "add the urgent tag", "set date for tomorrow", "remove the health tag"
    Distinction: "move" changes the bucket, "patch" changes only the metadata
 
@@ -83,6 +86,9 @@ Is it a concrete action someone can do?
 - "someday learn piano" → [{"op":"create","bucket":"someday","title":"Learn piano","body":"","due":null,"delegado_a":null,"tags":["learning"]}]
 - "fix the tab bug in the gtd-frontend tags" → [{"op":"create","bucket":"backlog","title":"Fix tab bug in the tags","body":"","due":null,"delegado_a":null,"tags":["work"],"project":"frontend-gtd"}]
 - "I have to answer some work emails" → [{"op":"create","bucket":"backlog","title":"Answer work emails","body":"","due":null,"delegado_a":null,"tags":["work"],"project":null}]
+- "buy 8mm screws" → [{"op":"create","bucket":"backlog","title":"Buy 8mm screws","body":"","due":null,"delegado_a":null,"tags":["shopping"],"location":"ferretería","area":"hogar"}]
+- "go to the gym" → [{"op":"create","bucket":"backlog","title":"Go to the gym","body":"","due":null,"delegado_a":null,"tags":["health"],"area":"ejercicio"}]
+- "meet up with Tuli for coffee, she wants to talk about the trip" → [{"op":"create","bucket":"backlog","title":"Meet up with Tuli","body":"She wants to talk about the trip","due":null,"delegado_a":null,"tags":["calls"],"area":"amistad"}]
 - "yesterday's meeting went well, take note" → [{"op":"create","bucket":"reference","title":"Yesterday's meeting","body":"The meeting went well","due":null,"delegado_a":null,"tags":["reference","work"]}]
 - open tasks include {"file":"20260601-1-buy-bread.md","title":"Buy bread","bucket":"backlog"}; message "mark buy bread as done" → [{"op":"done","target_title":"Buy bread"}]
 - open tasks include {"file":"20260601-2-old-idea.md","title":"Old idea","bucket":"someday"}; message "discard the old idea task" → [{"op":"dismiss","target_title":"Old idea"}]
