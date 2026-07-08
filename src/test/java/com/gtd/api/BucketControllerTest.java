@@ -59,6 +59,16 @@ class BucketControllerTest {
     }
 
     @Test
+    void areasReturnsConfiguredVocabularyInOrder() throws Exception {
+        when(vault.validAreas()).thenReturn(List.of("personal", "friends", "exercise"));
+        mvc.perform(get("/api/areas"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0]").value("personal"))
+                .andExpect(jsonPath("$[1]").value("friends"))
+                .andExpect(jsonPath("$[2]").value("exercise"));
+    }
+
+    @Test
     void tags() throws Exception {
         when(vault.tagCounts()).thenReturn(Map.of("shopping", Map.of("today", 1, "backlog", 2)));
         mvc.perform(get("/api/tags"))

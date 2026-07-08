@@ -82,6 +82,7 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 | `GET` | `/api/today` | Open items in *today* |
 | `GET` | `/api/items/{filename}` | Single item (frontmatter + body) |
 | `GET` | `/api/tags` | Unique tags with per-bucket counts |
+| `GET` | `/api/areas` | The configured `area` vocabulary (`gtd.areas`), in config order |
 | `GET` | `/api/stats` | Item counts per bucket plus total |
 | `GET` | `/api/history` | Recently completed/dismissed items, read straight from `brain/done`/`brain/discard` — `?limit=N` (default 20) |
 | `GET` | `/api/review` | Weekly review data — `staleDays` (3), `dueDays` (7), `completedDays` (7). Returns `{ stale_today, due_this_week, completed_this_week, week_stats }` |

@@ -19,8 +19,13 @@ class VaultServiceTest {
         return newVault(tempDir, new EventLog(tempDir.toString()));
     }
 
+    // Mirrors the localized vocabulary a real deployment may configure via gtd.areas — the
+    // committed default is English, but validation must be vocabulary-agnostic.
+    private static final List<String> TEST_AREAS =
+        List.of("personal", "amistad", "ejercicio", "trabajo", "salud", "finanzas", "hogar", "aprendizaje");
+
     private static VaultService newVault(Path tempDir, EventLog eventLog) {
-        return new VaultService(tempDir.toString(), eventLog, new ObjectMapper(), true, true, true, true, true);
+        return new VaultService(tempDir.toString(), TEST_AREAS, eventLog, new ObjectMapper(), true, true, true, true, true);
     }
 
     @Test
@@ -605,6 +610,41 @@ class VaultServiceTest {
         invalidOnWrite.put("title", "No area here");
         invalidOnWrite.put("area", "bogus");
         assertThat(vault.read(vault.write(invalidOnWrite, Actor.USER))).doesNotContainKey("area");
+    }
+
+    @Test
+    void areaMatchingIsAccentInsensitiveAndPersistsCanonicalSpelling(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        // an accented/mis-cased variant the LLM may emit still lands as the canonical config value
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Go to the gym");
+        op.put("area", " Ejercició ");
+        assertThat(vault.read(vault.write(op, Actor.USER)).get("area")).isEqualTo("ejercicio");
+    }
+
+    @Test
+    void validAreasReturnsConfiguredVocabularyInOrder(@TempDir Path tempDir) {
+        assertThat(newVault(tempDir).validAreas()).isEqualTo(TEST_AREAS);
+    }
+
+    @Test
+    void shouldPersistLocationFieldOnWriteAndDropBlankValues(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        // create-time location is stripped and persisted (the write() mirror of the patchMeta test)
+        Map<String, Object> withLocation = new java.util.LinkedHashMap<>();
+        withLocation.put("bucket", "backlog");
+        withLocation.put("title", "Buy 8mm screws");
+        withLocation.put("location", " ferretería ");
+        assertThat(vault.read(vault.write(withLocation, Actor.USER)).get("location")).isEqualTo("ferretería");
+
+        // a blank location the LLM may emit never lands as an empty field
+        Map<String, Object> blankLocation = new java.util.LinkedHashMap<>();
+        blankLocation.put("bucket", "backlog");
+        blankLocation.put("title", "Answer emails");
+        blankLocation.put("location", "   ");
+        assertThat(vault.read(vault.write(blankLocation, Actor.USER))).doesNotContainKey("location");
     }
 
     @Test
