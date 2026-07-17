@@ -42,6 +42,12 @@ public class BucketController {
         return vault.tagCounts();
     }
 
+    /** The configured `area` vocabulary (gtd.areas), in config order — the frontend builds its area UI from this. */
+    @GetMapping("/areas")
+    public List<String> areas() {
+        return vault.validAreas();
+    }
+
     @PostMapping("/items/{filename}/done")
     public ResponseEntity<Map<String, Object>> markDone(@PathVariable String filename) {
         vault.markDone(filename, Actor.USER);

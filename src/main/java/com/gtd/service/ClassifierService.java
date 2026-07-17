@@ -1,6 +1,7 @@
 package com.gtd.service;
 
 import com.gtd.util.MarkdownSerializer;
+import com.gtd.util.TextNormalizer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -12,8 +13,9 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.text.Normalizer;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,6 +33,10 @@ public class ClassifierService {
     private final String userContext;
 
     private static final Set<String> NON_FILING_BUCKETS = Set.of("now", "discard");
+    // Cap on how many open tasks are sent to the LLM as context on each classify request. Runs
+    // before serializeTasks()'s coarse 6000-char/80-item safety net — keyword pre-filtering keeps
+    // the task the user is actually referring to in context instead of relying on list order.
+    private static final int RELEVANT_TASK_LIMIT = 15;
 
     public ClassifierService(
             LlmProviderService llmProviders,
@@ -74,17 +80,21 @@ public class ClassifierService {
      * Level 1 → lightweight prompt. If parsing fails or all ops are now/discard → Level 2.
      */
     public ClassifyResult classifyAll(String message, List<Map<String, Object>> openTasks) {
-        String openTasksJson = serializeTasks(openTasks);
+        // Pre-filter to the tasks most likely relevant to this message before serializing — trims
+        // the token budget while keeping the target task (for done/edit/move/dismiss ops) in context.
+        List<Map<String, Object>> relevantTasks = filterRelevantTasks(openTasks, message, RELEVANT_TASK_LIMIT);
+        String openTasksJson = serializeTasks(relevantTasks);
         String today = LocalDate.now().toString();
         // Read fresh each call — the vault gains projects over time, so this list must not be
         // cached at startup or the classifier would keep classifying against a stale project set.
         String knownProjects = formatKnownProjects(vault.knownProjects());
+        String validAreas = String.join(", ", vault.validAreas());
 
         List<Map<String, Object>> ops = null;
         boolean usedFallback = false;
 
         // Level 1
-        String level1 = buildPrompt(promptTemplate, today, userContext, openTasksJson, knownProjects, message);
+        String level1 = buildPrompt(promptTemplate, today, userContext, openTasksJson, knownProjects, validAreas, message);
         String response1 = call(level1);
         try {
             ops = parseJsonList(response1);
@@ -94,7 +104,7 @@ public class ClassifierService {
 
         if (ops == null || allNonFiling(ops)) {
             // Level 2
-            String level2 = buildPrompt(fallbackTemplate, today, userContext, openTasksJson, knownProjects, message);
+            String level2 = buildPrompt(fallbackTemplate, today, userContext, openTasksJson, knownProjects, validAreas, message);
             String response2 = call(level2);
             try {
                 ops = parseJsonList(response2);
@@ -140,7 +150,7 @@ public class ClassifierService {
         String targetTitle = titleObj != null ? String.valueOf(titleObj).strip() : null;
 
         if (targetTitle != null && !targetTitle.isBlank()) {
-            String norm = normalize(targetTitle);
+            String norm = TextNormalizer.normalize(targetTitle);
 
             // Tasks with a missing/blank title are excluded entirely: a blank normalized title
             // would otherwise substring-match every query (""  is a substring of anything),
@@ -153,7 +163,7 @@ public class ClassifierService {
                 .toList();
 
             List<String> exact = candidates.stream()
-                .filter(t -> norm.equals(normalize(String.valueOf(t.get("title")))))
+                .filter(t -> norm.equals(TextNormalizer.normalize(String.valueOf(t.get("title")))))
                 .map(t -> (String) t.get("file"))
                 .distinct()
                 .toList();
@@ -161,7 +171,7 @@ public class ClassifierService {
 
             List<String> partial = candidates.stream()
                 .filter(t -> {
-                    String title = normalize(String.valueOf(t.get("title")));
+                    String title = TextNormalizer.normalize(String.valueOf(t.get("title")));
                     return title.contains(norm) || norm.contains(title);
                 })
                 .map(t -> (String) t.get("file"))
@@ -181,13 +191,6 @@ public class ClassifierService {
         return null;
     }
 
-    /** Lowercase, trimmed, diacritics stripped — "verificación" and "verificacion" must match. */
-    private static String normalize(String s) {
-        String stripped = Normalizer.normalize(s.strip().toLowerCase(), Normalizer.Form.NFD)
-            .replaceAll("\\p{M}", "");
-        return stripped;
-    }
-
     private boolean allNonFiling(List<Map<String, Object>> ops) {
         if (ops.isEmpty()) return true;
         return ops.stream().allMatch(op -> {
@@ -205,18 +208,76 @@ public class ClassifierService {
      * static/testable convention already used by resolveTargetFile and templateResourcePath).
      */
     static String buildPrompt(String template, String today, String userContext,
-                              String openTasksJson, String knownProjects, String message) {
+                              String openTasksJson, String knownProjects, String validAreas,
+                              String message) {
         return template
             .replace("{today}", today)
             .replace("{user_context}", userContext)
             .replace("{open_tasks}", openTasksJson)
             .replace("{known_projects}", knownProjects)
+            .replace("{valid_areas}", validAreas)
             .replace("{message}", message);
     }
 
     /** Comma-separated list for the prompt, or a clear "none yet" marker when the vault has no projects. */
     static String formatKnownProjects(List<String> projects) {
         return projects.isEmpty() ? "(none yet)" : String.join(", ", projects);
+    }
+
+    /**
+     * Pre-filters the open-tasks context sent to the LLM down to the `limit` most relevant tasks,
+     * scored by word-overlap between the message and each task's title. Pure, no dependencies —
+     * directly unit-testable, same convention as resolveTargetFile/buildPrompt/formatKnownProjects.
+     *
+     * When the vault is small (tasks.size() <= limit) the whole list passes through untouched.
+     * Above that, tasks whose titles share words with the message come first (highest overlap
+     * first), and any remaining slots up to `limit` are padded with the other tasks in original
+     * order. The padding matters: a done/edit/move/dismiss op needs its target task's title
+     * present to resolve, and the user's wording may share no words with that title — a handful
+     * of incidental matches on generic words must never evict every non-matching task.
+     */
+    static List<Map<String, Object>> filterRelevantTasks(List<Map<String, Object>> tasks, String message, int limit) {
+        if (tasks.size() <= limit) return tasks;
+
+        Set<String> messageTokens = tokenize(message);
+        List<Map<String, Object>> matched = tasks.stream()
+            .filter(t -> overlapScore(messageTokens, t) > 0)
+            .sorted(Comparator.comparingInt(
+                (Map<String, Object> t) -> overlapScore(messageTokens, t)).reversed())
+            .toList();
+        if (matched.size() >= limit) return matched.subList(0, limit);
+
+        List<Map<String, Object>> result = new ArrayList<>(matched);
+        for (Map<String, Object> task : tasks) {
+            if (result.size() >= limit) break;
+            if (overlapScore(messageTokens, task) == 0) result.add(task);
+        }
+        return result;
+    }
+
+    private static int overlapScore(Set<String> messageTokens, Map<String, Object> task) {
+        Object title = task.get("title");
+        if (title == null) return 0;
+        int score = 0;
+        for (String token : tokenize(String.valueOf(title))) {
+            if (messageTokens.contains(token)) score++;
+        }
+        return score;
+    }
+
+    /**
+     * Canonical words of a string — normalized first (lowercase, diacritics stripped) so that
+     * "colchón" in a title and "colchon" in a message produce the same token. Without the
+     * normalization step, Java's ASCII-only \W would split accented words apart ("colchón" →
+     * "colch", "n") and the overlap scoring would miss exactly the Spanish titles this vault
+     * is full of.
+     */
+    private static Set<String> tokenize(String s) {
+        Set<String> tokens = new java.util.HashSet<>();
+        for (String token : TextNormalizer.normalize(s).split("\\W+")) {
+            if (!token.isBlank()) tokens.add(token);
+        }
+        return tokens;
     }
 
     private String call(String promptText) {

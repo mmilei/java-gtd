@@ -19,8 +19,13 @@ class VaultServiceTest {
         return newVault(tempDir, new EventLog(tempDir.toString()));
     }
 
+    // Mirrors the localized vocabulary a real deployment may configure via gtd.areas — the
+    // committed default is English, but validation must be vocabulary-agnostic.
+    private static final List<String> TEST_AREAS =
+        List.of("personal", "amistad", "ejercicio", "trabajo", "salud", "finanzas", "hogar", "aprendizaje");
+
     private static VaultService newVault(Path tempDir, EventLog eventLog) {
-        return new VaultService(tempDir.toString(), eventLog, new ObjectMapper(), true, true, true, true, true);
+        return new VaultService(tempDir.toString(), TEST_AREAS, eventLog, new ObjectMapper(), true, true, true, true, true);
     }
 
     @Test
@@ -553,6 +558,93 @@ class VaultServiceTest {
         assertThat(vault.list("backlog").stream()
             .filter(m -> filename.equals(m.get("file")))
             .findFirst().orElseThrow().get("project")).isEqualTo("frontend-gtd");
+    }
+
+    @Test
+    void shouldPersistLocationFieldViaPatchMetaAndReadItBack(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Buy 8mm screws");
+        op.put("tags", new java.util.ArrayList<>(List.of("shopping")));
+        String filename = vault.write(op, Actor.USER);
+
+        vault.patchMeta(filename, Map.of("location", "ferretería"), Actor.USER);
+
+        assertThat(vault.read(filename).get("location")).isEqualTo("ferretería");
+        assertThat(vault.list("backlog").stream()
+            .filter(m -> filename.equals(m.get("file")))
+            .findFirst().orElseThrow().get("location")).isEqualTo("ferretería");
+    }
+
+    @Test
+    void shouldPersistAreaFieldWhenValidAndDropInvalidValues(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        // valid area (member of the closed vocabulary) persists via patchMeta
+        Map<String, Object> valid = new java.util.LinkedHashMap<>();
+        valid.put("bucket", "backlog");
+        valid.put("title", "Go to the gym");
+        String validFile = vault.write(valid, Actor.USER);
+        vault.patchMeta(validFile, Map.of("area", "ejercicio"), Actor.USER);
+        assertThat(vault.read(validFile).get("area")).isEqualTo("ejercicio");
+
+        // invalid area is silently dropped — no exception, field stays unset
+        Map<String, Object> invalid = new java.util.LinkedHashMap<>();
+        invalid.put("bucket", "backlog");
+        invalid.put("title", "Something else");
+        String invalidFile = vault.write(invalid, Actor.USER);
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() ->
+            vault.patchMeta(invalidFile, Map.of("area", "not-a-real-area"), Actor.USER));
+        assertThat(vault.read(invalidFile)).doesNotContainKey("area");
+
+        // same validation applies on write(): a valid area is kept, an invalid one never lands
+        Map<String, Object> validOnWrite = new java.util.LinkedHashMap<>();
+        validOnWrite.put("bucket", "backlog");
+        validOnWrite.put("title", "See friends");
+        validOnWrite.put("area", "AMISTAD"); // also verifies case-insensitive normalization
+        assertThat(vault.read(vault.write(validOnWrite, Actor.USER)).get("area")).isEqualTo("amistad");
+
+        Map<String, Object> invalidOnWrite = new java.util.LinkedHashMap<>();
+        invalidOnWrite.put("bucket", "backlog");
+        invalidOnWrite.put("title", "No area here");
+        invalidOnWrite.put("area", "bogus");
+        assertThat(vault.read(vault.write(invalidOnWrite, Actor.USER))).doesNotContainKey("area");
+    }
+
+    @Test
+    void areaMatchingIsAccentInsensitiveAndPersistsCanonicalSpelling(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        // an accented/mis-cased variant the LLM may emit still lands as the canonical config value
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Go to the gym");
+        op.put("area", " Ejercició ");
+        assertThat(vault.read(vault.write(op, Actor.USER)).get("area")).isEqualTo("ejercicio");
+    }
+
+    @Test
+    void validAreasReturnsConfiguredVocabularyInOrder(@TempDir Path tempDir) {
+        assertThat(newVault(tempDir).validAreas()).isEqualTo(TEST_AREAS);
+    }
+
+    @Test
+    void shouldPersistLocationFieldOnWriteAndDropBlankValues(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        // create-time location is stripped and persisted (the write() mirror of the patchMeta test)
+        Map<String, Object> withLocation = new java.util.LinkedHashMap<>();
+        withLocation.put("bucket", "backlog");
+        withLocation.put("title", "Buy 8mm screws");
+        withLocation.put("location", " ferretería ");
+        assertThat(vault.read(vault.write(withLocation, Actor.USER)).get("location")).isEqualTo("ferretería");
+
+        // a blank location the LLM may emit never lands as an empty field
+        Map<String, Object> blankLocation = new java.util.LinkedHashMap<>();
+        blankLocation.put("bucket", "backlog");
+        blankLocation.put("title", "Answer emails");
+        blankLocation.put("location", "   ");
+        assertThat(vault.read(vault.write(blankLocation, Actor.USER))).doesNotContainKey("location");
     }
 
     @Test

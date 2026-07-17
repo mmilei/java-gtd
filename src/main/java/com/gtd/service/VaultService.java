@@ -1,6 +1,7 @@
 package com.gtd.service;
 
 import com.gtd.util.MarkdownSerializer;
+import com.gtd.util.TextNormalizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,12 +40,19 @@ public class VaultService {
     private final ObjectMapper mapper;
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op", "project");
+    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op", "project", "location", "area");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
     private static final List<String> ALL_BUCKETS = List.of("today", "backlog", "waiting", "someday", "reference");
+    // Closed vocabulary for the `area` life-area field — the first LLM-controlled value in this
+    // codebase with real validation. Configured via `gtd.areas` (English defaults committed,
+    // localized override in application-local.properties). An out-of-vocabulary value is silently
+    // dropped (see normalizeArea), same spirit as an ambiguous `project` being left null.
+    private final List<String> areaVocabulary;
+    private final Map<String, String> canonicalAreas;
 
     public VaultService(
             @Value("${gtd.vault.path}") String vaultPath,
+            @Value("${gtd.areas}") List<String> areas,
             EventLog eventLog,
             ObjectMapper mapper,
             @Value("${gtd.vault.migrate-today-since:true}") boolean migrateTodaySinceEnabled,
@@ -54,6 +62,9 @@ public class VaultService {
             @Value("${gtd.vault.migrate-folder-split:true}") boolean migrateFolderSplitEnabled) {
         this.vaultPath      = vaultPath;
         this.mapper         = mapper;
+        this.areaVocabulary = areas.stream().map(String::strip).filter(a -> !a.isBlank()).toList();
+        this.canonicalAreas = new LinkedHashMap<>();
+        for (String area : areaVocabulary) canonicalAreas.put(TextNormalizer.normalize(area), area);
         this.todayDir       = Path.of(vaultPath, "brain/today");
         this.backlogDir     = Path.of(vaultPath, "brain/backlog");
         this.waitingDir     = Path.of(vaultPath, "brain/waiting");
@@ -101,6 +112,15 @@ public class VaultService {
         if (projectRaw != null && !String.valueOf(projectRaw).isBlank()) {
             frontmatter.put("project", String.valueOf(projectRaw).strip());
         }
+        // location mirrors project (in CLASSIFIER_KEYS, so excluded from the generic passthrough)
+        // — a freeform physical place inferred per-message, no vault-wide known-values context.
+        Object locationRaw = item.get("location");
+        if (locationRaw != null && !String.valueOf(locationRaw).isBlank()) {
+            frontmatter.put("location", String.valueOf(locationRaw).strip());
+        }
+        // area is validated against a closed vocabulary — an out-of-vocab value is dropped silently.
+        String area = normalizeArea(item.get("area"));
+        if (area != null) frontmatter.put("area", area);
         List<String> delegados = delegadoAsList(item.get("delegado_a"));
         if (!delegados.isEmpty()) frontmatter.put("delegado_a", delegados);
         List<String> tags = tagsFrom(item);
@@ -248,9 +268,14 @@ public class VaultService {
     }
 
     public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed", "project");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed", "project", "location");
         mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
+            if ("area".equals(k)) {
+                String area = normalizeArea(v);
+                if (area != null) item.put("area", area);
+                return;
+            }
             item.put(k, "delegado_a".equals(k) ? delegadoAsList(v) : v);
         }));
     }
@@ -782,6 +807,25 @@ public class VaultService {
             return List.of(s.strip());
         }
         return List.of();
+    }
+
+    /** The configured `gtd.areas` vocabulary, in config order — served to the frontend and the classifier prompt. */
+    public List<String> validAreas() {
+        return areaVocabulary;
+    }
+
+    /**
+     * Validates the `area` life-area field against the configured vocabulary. Matching is
+     * accent/case-insensitive (via TextNormalizer) and the persisted value is always the canonical
+     * spelling from config, so an LLM emitting "Ejercició" still lands as "ejercicio". Any
+     * non-member input (including null) yields null so the caller can simply omit the field.
+     * Silent/non-throwing on purpose — a bad area is dropped, never an error, matching how an
+     * ambiguous project is left null. Only applies to new writes; existing on-disk `area` values
+     * outside the vocabulary are never migrated or touched.
+     */
+    private String normalizeArea(Object raw) {
+        if (raw == null) return null;
+        return canonicalAreas.get(TextNormalizer.normalize(String.valueOf(raw)));
     }
 
     /**
