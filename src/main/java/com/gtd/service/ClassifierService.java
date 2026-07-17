@@ -85,16 +85,17 @@ public class ClassifierService {
         List<Map<String, Object>> relevantTasks = filterRelevantTasks(openTasks, message, RELEVANT_TASK_LIMIT);
         String openTasksJson = serializeTasks(relevantTasks);
         String today = LocalDate.now().toString();
-        // Read fresh each call — the vault gains projects over time, so this list must not be
-        // cached at startup or the classifier would keep classifying against a stale project set.
-        String knownProjects = formatKnownProjects(vault.knownProjects());
+        // Read fresh each call — the vault gains projects/tags over time, so these lists must
+        // not be cached at startup or the classifier would keep classifying against a stale set.
+        String knownProjects = formatCsvOrNoneYet(vault.knownProjects());
+        String knownTags = formatCsvOrNoneYet(vault.knownTags());
         String validAreas = String.join(", ", vault.validAreas());
 
         List<Map<String, Object>> ops = null;
         boolean usedFallback = false;
 
         // Level 1
-        String level1 = buildPrompt(promptTemplate, today, userContext, openTasksJson, knownProjects, validAreas, message);
+        String level1 = buildPrompt(promptTemplate, today, userContext, openTasksJson, knownProjects, knownTags, validAreas, message);
         String response1 = call(level1);
         try {
             ops = parseJsonList(response1);
@@ -104,7 +105,7 @@ public class ClassifierService {
 
         if (ops == null || allNonFiling(ops)) {
             // Level 2
-            String level2 = buildPrompt(fallbackTemplate, today, userContext, openTasksJson, knownProjects, validAreas, message);
+            String level2 = buildPrompt(fallbackTemplate, today, userContext, openTasksJson, knownProjects, knownTags, validAreas, message);
             String response2 = call(level2);
             try {
                 ops = parseJsonList(response2);
@@ -208,20 +209,21 @@ public class ClassifierService {
      * static/testable convention already used by resolveTargetFile and templateResourcePath).
      */
     static String buildPrompt(String template, String today, String userContext,
-                              String openTasksJson, String knownProjects, String validAreas,
-                              String message) {
+                              String openTasksJson, String knownProjects, String knownTags,
+                              String validAreas, String message) {
         return template
             .replace("{today}", today)
             .replace("{user_context}", userContext)
             .replace("{open_tasks}", openTasksJson)
             .replace("{known_projects}", knownProjects)
+            .replace("{known_tags}", knownTags)
             .replace("{valid_areas}", validAreas)
             .replace("{message}", message);
     }
 
-    /** Comma-separated list for the prompt, or a clear "none yet" marker when the vault has no projects. */
-    static String formatKnownProjects(List<String> projects) {
-        return projects.isEmpty() ? "(none yet)" : String.join(", ", projects);
+    /** Comma-separated list for the prompt, or a clear "none yet" marker when the vault has nothing yet — shared by known_projects and known_tags. */
+    static String formatCsvOrNoneYet(List<String> values) {
+        return values.isEmpty() ? "(none yet)" : String.join(", ", values);
     }
 
     /**

@@ -7,6 +7,8 @@ Open tasks (reference for target_title — match by title, never invent a filena
 
 Known projects already in the vault (set the create/patch "project" field only when the message clearly names one of these, or unambiguously names a new distinct codebase; otherwise null): {known_projects}
 
+Tags already used in the vault — reuse one that fits instead of inventing a near-duplicate, and assign more than one tag when more than one context applies: {known_tags}
+
 Valid buckets: today, backlog, waiting, someday, reference, now, discard
 Valid operations: create, done, update, move, edit, dismiss, patch
 

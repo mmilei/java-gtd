@@ -9,6 +9,9 @@
 ## Known projects
 Projects already present in the vault: {known_projects}
 
+## Tags already used in the vault
+{known_tags}
+
 ## Decision tree
 First: does the message have any recognizable semantic content (a real task, real information, a real intent)? If it's noise — keyboard mashing ("asd", "asdf", "qwerty", "jkjk"), random characters, or text that communicates nothing — use discard directly, WITHOUT walking the rest of the tree. Don't file it as backlog just because it has letters and superficially looks like "a new task" — gibberish is not a task.
 
@@ -34,7 +37,7 @@ Is it a concrete action someone can do?
    project: the specific codebase/project this task belongs to. Only set it if the message clearly identifies a project from the Known projects list above, OR unambiguously names a new distinct project/codebase not yet in that list (e.g. "for the pikon app", "in the frontend-gtd repo"). NEVER invent a project name for generic "work" tasks that don't name a specific codebase. When in doubt → null: a missed project is harmless, a wrong one pollutes the field.
    location: the physical place the message implies (hardware store, supermarket, pharmacy, bank, vet, etc.), inferred from the task's verb/object, ONLY when it's reasonably clear — when in doubt, null.
    area: the life area this task belongs to. ONE of exactly: {valid_areas}. Set it ONLY when the task clearly matches one of these — when in doubt → null.
-   Tags: at least 1 context tag inferred from the title:
+   Tags: assign EVERY context tag that applies, not just one — most tasks fit more than one context (e.g. "pay the gym membership" is both finances and health). Prefer reusing an exact tag from "Tags already used in the vault" above when one fits, instead of inventing a near-duplicate ("shopping" vs "grocery" vs "store"). Fall back to these base categories only when nothing existing applies or the vault has no tags yet:
      purchase/grocery/supermarket/store/buy → "shopping" | doctor/health/medicine/appointment/gym/dentist → "health"
      call/whatsapp/message/contact → "calls" | work/meeting/job → "work"
      pay/invoice/bank/tax/subscription → "finances" | home/bathroom/kitchen/apartment/cleaning → "home"
@@ -62,7 +65,7 @@ Is it a concrete action someone can do?
    Different from "done": done = task completed, dismiss = decided not to do it
 
 7. "patch" — modify tags or dates without changing body or bucket
-   Fields: op, target_title, tags (full array of context tags), due (YYYY-MM-DD or null), today_since (YYYY-MM-DD or null), project (string or null — optional, same rules as the create op's project field), location (string or null — optional, same rules as the create op's location field), area (string or null — optional, one of: {valid_areas}; same rules as the create op's area field)
+   Fields: op, target_title, tags (full array of context tags — same reuse-existing-tags and assign-more-than-one rules as the create op), due (YYYY-MM-DD or null), today_since (YYYY-MM-DD or null), project (string or null — optional, same rules as the create op's project field), location (string or null — optional, same rules as the create op's location field), area (string or null — optional, one of: {valid_areas}; same rules as the create op's area field)
    Use when the user changes metadata: "add the urgent tag", "set date for tomorrow", "remove the health tag"
    Distinction: "move" changes the bucket, "patch" changes only the metadata
 
@@ -88,6 +91,7 @@ Is it a concrete action someone can do?
 - "I have to answer some work emails" → [{"op":"create","bucket":"backlog","title":"Answer work emails","body":"","due":null,"delegado_a":null,"tags":["work"],"project":null}]
 - "buy 8mm screws" → [{"op":"create","bucket":"backlog","title":"Buy 8mm screws","body":"","due":null,"delegado_a":null,"tags":["shopping"],"location":"hardware store","area":"home"}]
 - "go to the gym" → [{"op":"create","bucket":"backlog","title":"Go to the gym","body":"","due":null,"delegado_a":null,"tags":["health"],"area":"exercise"}]
+- "pay the gym membership" → [{"op":"create","bucket":"backlog","title":"Pay the gym membership","body":"","due":null,"delegado_a":null,"tags":["finances","health"]}]
 - "meet up with Tuli for coffee, she wants to talk about the trip" → [{"op":"create","bucket":"backlog","title":"Meet up with Tuli","body":"She wants to talk about the trip","due":null,"delegado_a":null,"tags":["calls"],"area":"friends"}]
 - "yesterday's meeting went well, take note" → [{"op":"create","bucket":"reference","title":"Yesterday's meeting","body":"The meeting went well","due":null,"delegado_a":null,"tags":["reference","work"]}]
 - open tasks include {"file":"20260601-1-buy-bread.md","title":"Buy bread","bucket":"backlog"}; message "mark buy bread as done" → [{"op":"done","target_title":"Buy bread"}]
