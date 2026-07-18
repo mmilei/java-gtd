@@ -50,8 +50,30 @@ POST /api/chat  ("call the dentist tomorrow morning")
 - **Confirmation for destructive ops** — `edit`, `update`, and `dismiss` return `requires_confirmation: true` with a current/proposed body diff and a `chat_ref`; the client approves via `POST /api/chat/confirm`, which records the approval as `actor: llm` in the event log, distinct from a human editing the same task directly.
 - **Durable, restart-safe undo** — every mutation appends an event to `.vault-meta/events.jsonl` *after* its write succeeds (not before, avoiding a phantom entry if the write fails). `POST /api/undo` inverts the most recent not-yet-undone one by moving the file back from its post-mutation path to its pre-mutation path (if they differ) and restoring `previous_content` — one rule for create/edit/move/done/dismiss alike. Undo depth 50, survives a restart because nothing is cached in memory: "what's undoable" is derived fresh from the log every time. See [Event log & undo](#event-log--undo) below.
 - **Plain Markdown storage** — no database. Notes are portable, greppable, and remain fully editable in Obsidian while the API runs. Writes are synchronized and moves are atomic with a fallback that leaves the file untouched at origin on failure.
-- **Self-healing startup** — migrations normalize legacy notes on boot (missing `today_since`, malformed timestamps, bucket/folder mismatches, the one-time folder-per-bucket split), each individually toggleable.
+- **Self-healing startup** — migrations normalize legacy notes on boot (missing `today_since`, malformed timestamps, bucket/folder mismatches, the one-time folder-per-bucket split), each individually toggleable. See [Startup migrations & kill-switches](#startup-migrations--kill-switches) below.
 - **Virtual threads** — `spring.threads.virtual.enabled=true`; blocking file and LLM I/O without pool tuning.
+
+## Startup migrations & kill-switches
+
+`VaultService` runs a set of **self-healing migrations** in its constructor, on every application start. They exist because the vault is plain Markdown a human also edits in Obsidian: notes drift from the current schema (a hand-edited frontmatter, a value written by an older version, a `moveBucket` that half-failed), and each boot is a chance to quietly normalize what it finds back to the current shape.
+
+All five share the same contract:
+
+- **Self-healing** — they read the on-disk notes and fix what's out of shape, rather than assuming the data is already correct.
+- **Idempotent** — once a note is normalized there's nothing left for that migration to do, so re-running it on the next boot is a no-op. They never double-apply, and running them a hundred times is the same as running them once.
+- **Boot-time, unconditional** — they run on every startup (there's no "already migrated" flag file to gate them); the idempotency above is what makes that cheap and safe. Non-GTD notes (no `bucket` key — index pages, freeform ideas) are left untouched.
+
+Each migration is individually controlled by a boolean in `application.properties`, all defaulting to `true`. Setting one to `false` is a **kill-switch**: it skips that migration entirely on the next boot — an escape hatch for a bad interaction with unusual on-disk data, or simply to freeze the vault's current layout. Turning one off never deletes data; it only stops that normalization pass from running.
+
+| Property (`gtd.vault.*`) | Migration | What it normalizes |
+|--------------------------|-----------|--------------------|
+| `migrate-folder-split` | `migrateFolderSplit()` | One-time move of notes out of the legacy shared `brain/inbox/` (and done/dismissed items sitting in `someday`/`resources`) into the folder-per-bucket layout. |
+| `migrate-today-since` | `migrateTodaySince()` | Backfills a missing `today_since` on `today` notes from their `created` date. |
+| `migrate-timestamps` | `migrateTimestamps()` | Rewrites full ISO datetime values left in frontmatter (`...T...`) to plain dates. |
+| `migrate-bucket-mismatch` | `migrateBucketMismatch()` | Relocates a note whose `bucket` field disagrees with the directory it sits in, and quarantines filename duplicates across bucket dirs (loser marked dismissed, moved to `brain/.archive/duplicates/` — never deleted). |
+| `migrate-delegado-list` | `migrateDelegadoToList()` | Rewrites a legacy scalar `delegado_a: Juan` as a single-element list `["Juan"]`. |
+
+They are invoked in that order in the constructor — `migrate-folder-split` first (it moves files into the right directories) so that `migrate-bucket-mismatch` afterwards sees each note already in its bucket folder.
 
 ## Event log & undo
 
