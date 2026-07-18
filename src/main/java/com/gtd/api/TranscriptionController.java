@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.audio.transcription.AudioTranscriptionPrompt;
 import org.springframework.ai.audio.transcription.AudioTranscriptionResponse;
 import org.springframework.ai.openai.OpenAiAudioTranscriptionModel;
+import org.springframework.ai.openai.OpenAiAudioTranscriptionOptions;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -26,7 +27,9 @@ public class TranscriptionController {
     }
 
     @PostMapping("/transcribe")
-    public ResponseEntity<Map<String, String>> transcribe(@RequestParam("audio") MultipartFile audio) {
+    public ResponseEntity<Map<String, String>> transcribe(
+            @RequestParam("audio") MultipartFile audio,
+            @RequestParam(value = "language", required = false) String language) {
         if (audio.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "audio file is required"));
         }
@@ -39,7 +42,15 @@ public class TranscriptionController {
                 }
             };
 
-            AudioTranscriptionResponse response = transcriptionModel.call(new AudioTranscriptionPrompt(resource));
+            // A language hint (ISO-639-1, e.g. "es"/"en") steers Whisper instead of letting it
+            // auto-detect — helps short/noisy clips. Omitted → keep auto-detect (the model's
+            // configured default), so an absent param behaves exactly as before.
+            AudioTranscriptionPrompt prompt = (language != null && !language.isBlank())
+                ? new AudioTranscriptionPrompt(resource,
+                    OpenAiAudioTranscriptionOptions.builder().language(language.strip()).build())
+                : new AudioTranscriptionPrompt(resource);
+
+            AudioTranscriptionResponse response = transcriptionModel.call(prompt);
             String text = response.getResult().getOutput();
             return ResponseEntity.ok(Map.of("text", text));
 
