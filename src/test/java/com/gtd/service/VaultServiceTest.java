@@ -819,6 +819,61 @@ class VaultServiceTest {
     }
 
     @Test
+    void listUnconfirmedShouldReturnOnlyActiveTasksWithConfirmedFalse(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> low = new java.util.LinkedHashMap<>();
+        low.put("bucket", "backlog");
+        low.put("title", "Low confidence task");
+        low.put("confirmed", false);
+        String lowFile = vault.write(low, Actor.LLM);
+
+        // confirmed:true and confirmed absent must NOT show up in the review queue
+        Map<String, Object> high = new java.util.LinkedHashMap<>();
+        high.put("bucket", "backlog");
+        high.put("title", "High confidence task");
+        high.put("confirmed", true);
+        vault.write(high, Actor.LLM);
+
+        Map<String, Object> normal = new java.util.LinkedHashMap<>();
+        normal.put("bucket", "today");
+        normal.put("title", "Normal task");
+        vault.write(normal, Actor.LLM);
+
+        List<Map<String, Object>> unconfirmed = vault.listUnconfirmed();
+        assertThat(unconfirmed).hasSize(1);
+        assertThat(unconfirmed.get(0).get("file")).isEqualTo(lowFile);
+
+        // once confirmed via patchMeta, it drops out of the queue
+        vault.patchMeta(lowFile, Map.of("confirmed", true), Actor.USER);
+        assertThat(vault.listUnconfirmed()).isEmpty();
+    }
+
+    @Test
+    void shouldPersistPriorityViaPatchMetaAndReadItBack(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Prioritize me");
+        String filename = vault.write(op, Actor.USER);
+
+        vault.patchMeta(filename, Map.of("priority", "high"), Actor.USER);
+        assertThat(vault.read(filename).get("priority")).isEqualTo("high");
+    }
+
+    @Test
+    void shouldPersistCaptureSourceOnWriteViaPassthrough(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Buy milk");
+        op.put("capture_source", "acordate de comprar leche mañana");
+        String filename = vault.write(op, Actor.LLM);
+
+        assertThat(vault.read(filename).get("capture_source")).isEqualTo("acordate de comprar leche mañana");
+    }
+
+    @Test
     void shouldOmitConfirmedFieldWhenNotProvidedOnWrite(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
         Map<String, Object> op = new java.util.LinkedHashMap<>();

@@ -58,7 +58,7 @@ public class ChatController {
         List<Map<String, Object>> discardedOps = new ArrayList<>();
 
         for (Map<String, Object> op : ops) {
-            Map<String, Object> dispatched = dispatch(op, result.usedFallback());
+            Map<String, Object> dispatched = dispatch(op, result.usedFallback(), message);
             results.add(dispatched);
 
             String bucket = (String) op.get("bucket");
@@ -164,11 +164,11 @@ public class ChatController {
         }
     }
 
-    private Map<String, Object> dispatch(Map<String, Object> op, boolean usedFallback) {
+    private Map<String, Object> dispatch(Map<String, Object> op, boolean usedFallback, String captureSource) {
         String opType = (String) op.get("op");
         try {
             return switch (opType) {
-                case "create" -> handleCreate(op, usedFallback);
+                case "create" -> handleCreate(op, usedFallback, captureSource);
                 case "done"   -> handleDone(op);
                 case "update" -> handleUpdate(op);
                 case "move"   -> handleMove(op);
@@ -183,7 +183,7 @@ public class ChatController {
         }
     }
 
-    private Map<String, Object> handleCreate(Map<String, Object> op, boolean usedFallback) {
+    private Map<String, Object> handleCreate(Map<String, Object> op, boolean usedFallback, String captureSource) {
         String bucket = (String) op.get("bucket");
         String title  = op.get("title") != null ? (String) op.get("title") : "";
         if ("now".equals(bucket) || "discard".equals(bucket)) {
@@ -195,14 +195,19 @@ public class ChatController {
                 "message", op.getOrDefault("message", "No archivado.")
             );
         }
+        // Copy rather than mutate op in place: it may be an immutable Map (Jackson-deserialized
+        // ops are mutable, but callers/tests aren't guaranteed to hand us one).
+        Map<String, Object> toWrite = new java.util.LinkedHashMap<>(op);
+        // capture_source preserves the exact user string that produced this task — the transcript
+        // has it too, but only globally; this links task↔string on the note itself. It's not a
+        // CLASSIFIER_KEY, so VaultService.write() persists it via the generic passthrough.
+        if (captureSource != null && !captureSource.isBlank()) {
+            toWrite.put("capture_source", captureSource);
+        }
         // usedFallback is a proxy for low classifier confidence, not LLM self-assessment (which
         // tends to always claim certainty) — confirmed:false queues the task for later review
-        // instead of blocking or silently trusting a shaky classification. Copy rather than
-        // mutate op in place: it may be an immutable Map (Jackson-deserialized ops are mutable,
-        // but callers/tests aren't guaranteed to hand us one).
-        Map<String, Object> toWrite = op;
+        // instead of blocking or silently trusting a shaky classification.
         if (usedFallback) {
-            toWrite = new java.util.LinkedHashMap<>(op);
             toWrite.put("confirmed", false);
         }
         String filename = vault.write(toWrite, Actor.LLM);

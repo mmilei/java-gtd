@@ -78,6 +78,17 @@ class BucketControllerTest {
     }
 
     @Test
+    void unconfirmed() throws Exception {
+        when(vault.listUnconfirmed()).thenReturn(List.of(
+                Map.of("file", FILE, "title", "Low confidence", "bucket", "backlog", "confirmed", false)));
+        mvc.perform(get("/api/unconfirmed"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].file").value(FILE))
+                .andExpect(jsonPath("$[0].confirmed").value(false));
+        verify(vault).listUnconfirmed();
+    }
+
+    @Test
     void getItemFound() throws Exception {
         mvc.perform(get("/api/items/" + FILE))
                 .andExpect(status().isOk())

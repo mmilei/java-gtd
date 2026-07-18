@@ -42,6 +42,12 @@ public class BucketController {
         return vault.tagCounts();
     }
 
+    /** Low-confidence review queue: active tasks the classifier filed with confirmed:false. The user clears each via POST /api/items/{filename}/confirm. */
+    @GetMapping("/unconfirmed")
+    public List<Map<String, Object>> unconfirmed() {
+        return vault.listUnconfirmed();
+    }
+
     /** The configured `area` vocabulary (gtd.areas), in config order — the frontend builds its area UI from this. */
     @GetMapping("/areas")
     public List<String> areas() {

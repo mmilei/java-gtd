@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -38,6 +39,11 @@ public class VaultService {
     private final Path archiveDuplicatesDir;
     private final EventLog eventLog;
     private final ObjectMapper mapper;
+    // Single lock guarding every file-system mutation (mutate/undoEvent) — replaces the old
+    // `synchronized` monitors, which pin the carrier thread under virtual threads
+    // (spring.threads.virtual.enabled=true). One lock per class preserves the full mutual
+    // exclusion the monitors gave: undo and mutate can never interleave a half-written file.
+    private final ReentrantLock lock = new ReentrantLock();
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op", "project", "location", "area");
@@ -183,6 +189,24 @@ public class VaultService {
         return all;
     }
 
+    /**
+     * Active tasks the classifier filed with low confidence (confirmed:false, set by
+     * ChatController.handleCreate when the fallback prompt ran) — the review queue the user works
+     * through with POST /api/items/{file}/confirm. Only confirmed==Boolean.FALSE qualifies: an
+     * absent, null, or true value all mean "confirmed" (see the note-format doc), so a normal task
+     * never shows up here. Scans the same active buckets as list()/listAll(), so done/dismissed
+     * items are already excluded.
+     */
+    public List<Map<String, Object>> listUnconfirmed() {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (String bucket : ALL_BUCKETS) {
+            for (Map<String, Object> item : list(bucket)) {
+                if (Boolean.FALSE.equals(item.get("confirmed"))) result.add(item);
+            }
+        }
+        return result;
+    }
+
     /** Unique tags across the vault with their count per bucket, e.g. {"shopping": {"today": 1, "backlog": 2, ...}}. */
     public Map<String, Map<String, Integer>> tagCounts() {
         Map<String, Map<String, Integer>> counts = new TreeMap<>();
@@ -268,7 +292,7 @@ public class VaultService {
     }
 
     public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed", "project", "location");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed", "project", "location", "priority");
         mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             if ("area".equals(k)) {
@@ -287,7 +311,8 @@ public class VaultService {
      * old op-specific undo logic and, as a side effect, fixes the historical bug where undoing a
      * move restored content at the old path but left the moved-to copy behind as a duplicate.
      */
-    public synchronized void undoEvent(Event e) {
+    public void undoEvent(Event e) {
+        lock.lock();
         try {
             Path after = e.pathAfter() != null ? Path.of(e.pathAfter()) : null;
             if (e.previousContent() == null) {
@@ -301,6 +326,8 @@ public class VaultService {
             Files.writeString(before, e.previousContent());
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -729,9 +756,10 @@ public class VaultService {
      * The event is appended only after the write succeeds — unlike the old UndoStack, which
      * pushed before writing and could leave a phantom undo entry if the write failed.
      */
-    private synchronized void mutate(String filename, Path targetDir, Actor actor, String op, String confirmation, String chatRef, java.util.function.Consumer<Map<String, Object>> modifier) {
-        Path file = resolveFile(filename);
+    private void mutate(String filename, Path targetDir, Actor actor, String op, String confirmation, String chatRef, java.util.function.Consumer<Map<String, Object>> modifier) {
+        lock.lock();
         try {
+            Path file = resolveFile(filename);
             String previousContent = Files.readString(file);
 
             Map<String, Object> item = MarkdownSerializer.parse(previousContent, filename);
@@ -762,6 +790,8 @@ public class VaultService {
                 file.toString(), dest.toString(), previousContent, confirmation, chatRef));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        } finally {
+            lock.unlock();
         }
     }
 
