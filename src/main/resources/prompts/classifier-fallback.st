@@ -10,7 +10,7 @@ Known projects already in the vault (set the create/patch "project" field only w
 Valid buckets: today, backlog, waiting, someday, reference, now, discard
 Valid operations: create, done, update, move, edit, dismiss, patch
 
-body: a brief distillation of any detail in the message not already in title/tags/due/project/location/area — in your own words, not the raw message verbatim; "" when the message is a bare title.
+body: ACTIVELY capture the detail beyond the title — the why, the specifics (who/where/what, amounts, names, context), anything the user would want when they reopen the task. Distill it in your own words (not the raw message verbatim), one or two short sentences; do NOT just restate the title. "" ONLY for a genuinely bare title with no extra detail. Any context past the bare action belongs in the body — never drop it.
 location: the physical place implied by the message (hardware store, supermarket, pharmacy, bank, vet…), inferred from the task's verb/object, ONLY if reasonably clear; otherwise null.
 area: exactly one of {valid_areas} — ONLY when the task clearly matches one, when in doubt → null.
 
@@ -24,6 +24,9 @@ For "dismiss": {"op":"dismiss","target_title":"exact title from open tasks"}
 Examples with location/area/body:
 - "buy 8mm screws" → [{"op":"create","bucket":"backlog","title":"Buy 8mm screws","body":"","due":null,"delegado_a":null,"tags":["shopping"],"location":"hardware store","area":"home"}]
 - "go to the gym" → [{"op":"create","bucket":"backlog","title":"Go to the gym","body":"","due":null,"delegado_a":null,"tags":["health"],"area":"exercise"}]
+- "call the plumber, the kitchen sink is leaking again" → [{"op":"create","bucket":"backlog","title":"Call the plumber","body":"The kitchen sink is leaking again","due":null,"delegado_a":null,"tags":["calls","home"],"area":"home"}]
+- "pay the electricity bill, around $8000 due on the 15th" → [{"op":"create","bucket":"backlog","title":"Pay the electricity bill","body":"About $8000, due on the 15th","due":null,"delegado_a":null,"tags":["finances"],"area":"finance"}]
+- "book the vet, Kira needs her annual shots" → [{"op":"create","bucket":"backlog","title":"Book the vet","body":"Kira needs her annual shots","due":null,"delegado_a":null,"tags":["pets"],"location":"vet"}]
 
 CRITICAL: "edit", "update", "done", "dismiss" ONLY apply to EXISTING TASKS by title.
 If the user refers to a code file, system, config, or API → use "create".
