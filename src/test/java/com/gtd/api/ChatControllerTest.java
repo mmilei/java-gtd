@@ -48,7 +48,7 @@ class ChatControllerTest {
     void chatCreate() throws Exception {
         List<Map<String, Object>> ops = List.of(
                 Map.of("op", "create", "bucket", "today", "title", "Call the doctor",
-                        "body", "", "due", "", "delegado_a", "", "tags", List.of())
+                        "body", "", "due", "", "related_people", "", "tags", List.of())
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
         when(vault.write(any(), any())).thenReturn("20260625-120000-call-the-doctor.md");
@@ -68,7 +68,7 @@ class ChatControllerTest {
     void chatCreatePersistsOriginalMessageAsCaptureSource() throws Exception {
         List<Map<String, Object>> ops = List.of(
                 Map.of("op", "create", "bucket", "today", "title", "Call the doctor",
-                        "body", "", "due", "", "delegado_a", "", "tags", List.of())
+                        "body", "", "due", "", "related_people", "", "tags", List.of())
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
         when(vault.write(any(), any())).thenReturn("20260625-120000-call-the-doctor.md");
@@ -115,7 +115,7 @@ class ChatControllerTest {
     void chatWithFallback() throws Exception {
         List<Map<String, Object>> ops = List.of(
                 Map.of("op", "create", "bucket", "someday", "title", "Learn piano",
-                        "body", "", "due", "", "delegado_a", "", "tags", List.of())
+                        "body", "", "due", "", "related_people", "", "tags", List.of())
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, true));
         when(vault.write(any(), any())).thenReturn("20260625-120000-learn-piano.md");
@@ -258,7 +258,7 @@ class ChatControllerTest {
     void chatNowNotFiled() throws Exception {
         List<Map<String, Object>> ops = List.of(
                 Map.of("op", "create", "bucket", "now", "title", "Reply to email",
-                        "message", "Do it now", "body", "", "due", "", "delegado_a", "", "tags", List.of())
+                        "message", "Do it now", "body", "", "due", "", "related_people", "", "tags", List.of())
         );
         when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
 
