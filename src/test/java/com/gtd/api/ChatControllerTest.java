@@ -229,7 +229,6 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.ops[0].requires_confirmation").value(true))
                 .andExpect(jsonPath("$.ops[0].current_body").value("Existing content"))
                 .andExpect(jsonPath("$.ops[0].proposed_body").value("Existing content\nNew line"));
-        verify(vault, never()).appendToTask(any(), any(), any());
         verify(vault).read("20260625-120000-test.md");
     }
 

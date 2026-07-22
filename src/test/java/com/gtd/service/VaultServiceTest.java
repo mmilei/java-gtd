@@ -25,7 +25,7 @@ class VaultServiceTest {
         List.of("personal", "amistad", "ejercicio", "trabajo", "salud", "finanzas", "hogar", "aprendizaje");
 
     private static VaultService newVault(Path tempDir, EventLog eventLog) {
-        return new VaultService(tempDir.toString(), TEST_AREAS, eventLog, new ObjectMapper(), true, true, true, true, true);
+        return new VaultService(tempDir.toString(), TEST_AREAS, eventLog, new ObjectMapper(), true);
     }
 
     @Test
@@ -189,7 +189,7 @@ class VaultServiceTest {
         // editing an already-done item must not overwrite the original done_date
         Files.writeString(tempDir.resolve("brain/done").resolve(filename),
             Files.readString(tempDir.resolve("brain/done").resolve(filename)));
-        vault.appendToTask(filename, "extra note", Actor.USER);
+        vault.replaceBody(filename, "extra note", Actor.USER);
         assertThat(vault.read(filename).get("done_date")).isEqualTo(doneDate);
     }
 
