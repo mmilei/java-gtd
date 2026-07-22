@@ -56,6 +56,19 @@ class TranscriptionControllerTest {
     }
 
     @Test
+    void regionTaggedLanguageIsNormalizedToPrimarySubtag() throws Exception {
+        when(transcriptionModel.call(any(AudioTranscriptionPrompt.class)))
+                .thenReturn(new AudioTranscriptionResponse(new AudioTranscription("hola")));
+
+        mvc.perform(multipart("/api/transcribe").file(audio(new byte[]{1, 2, 3})).param("language", "es-AR"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AudioTranscriptionPrompt> captor = ArgumentCaptor.forClass(AudioTranscriptionPrompt.class);
+        verify(transcriptionModel).call(captor.capture());
+        assertThat(((OpenAiAudioTranscriptionOptions) captor.getValue().getOptions()).getLanguage()).isEqualTo("es");
+    }
+
+    @Test
     void withoutLanguageParamNoOptionsAreAttached() throws Exception {
         when(transcriptionModel.call(any(AudioTranscriptionPrompt.class)))
                 .thenReturn(new AudioTranscriptionResponse(new AudioTranscription("hello")));

@@ -42,12 +42,15 @@ public class TranscriptionController {
                 }
             };
 
-            // A language hint (ISO-639-1, e.g. "es"/"en") steers Whisper instead of letting it
-            // auto-detect — helps short/noisy clips. Omitted → keep auto-detect (the model's
-            // configured default), so an absent param behaves exactly as before.
+            // A language hint steers Whisper instead of letting it auto-detect — helps short/noisy
+            // clips. The frontend sends a full BCP-47 tag (e.g. "es-AR") because the same value also
+            // drives the Web Speech API preview, but Whisper's API only accepts the bare ISO-639-1
+            // subtag (e.g. "es") and 400s on anything with a region — so strip it here. Omitted →
+            // keep auto-detect (the model's configured default), so an absent param behaves exactly
+            // as before.
             AudioTranscriptionPrompt prompt = (language != null && !language.isBlank())
                 ? new AudioTranscriptionPrompt(resource,
-                    OpenAiAudioTranscriptionOptions.builder().language(language.strip()).build())
+                    OpenAiAudioTranscriptionOptions.builder().language(iso639Subtag(language)).build())
                 : new AudioTranscriptionPrompt(resource);
 
             AudioTranscriptionResponse response = transcriptionModel.call(prompt);
@@ -60,5 +63,10 @@ public class TranscriptionController {
             log.error("transcription failed", e);
             return ResponseEntity.status(502).body(Map.of("error", "transcription failed"));
         }
+    }
+
+    /** "es-AR" -> "es"; "es" -> "es". Whisper rejects region subtags outright. */
+    private static String iso639Subtag(String bcp47) {
+        return bcp47.strip().split("-", 2)[0].toLowerCase(java.util.Locale.ROOT);
     }
 }
