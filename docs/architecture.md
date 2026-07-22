@@ -63,17 +63,17 @@ All five share the same contract:
 - **Idempotent** — once a note is normalized there's nothing left for that migration to do, so re-running it on the next boot is a no-op. They never double-apply, and running them a hundred times is the same as running them once.
 - **Boot-time, unconditional** — they run on every startup (there's no "already migrated" flag file to gate them); the idempotency above is what makes that cheap and safe. Non-GTD notes (no `bucket` key — index pages, freeform ideas) are left untouched.
 
-Each migration is individually controlled by a boolean in `application.properties`, all defaulting to `true`. Setting one to `false` is a **kill-switch**: it skips that migration entirely on the next boot — an escape hatch for a bad interaction with unusual on-disk data, or simply to freeze the vault's current layout. Turning one off never deletes data; it only stops that normalization pass from running.
+All five are gated together by a single boolean, `gtd.vault.migrations-enabled` in `application.properties`, defaulting to `true`. Setting it to `false` is a **kill-switch**: it skips all five on the next boot — an escape hatch for a bad interaction with unusual on-disk data, or simply to freeze the vault's current layout. Turning it off never deletes data; it only stops these normalization passes from running. (The five never needed independent toggles in practice — every deployment ran with all five on.)
 
-| Property (`gtd.vault.*`) | Migration | What it normalizes |
-|--------------------------|-----------|--------------------|
-| `migrate-folder-split` | `migrateFolderSplit()` | One-time move of notes out of the legacy shared `brain/inbox/` (and done/dismissed items sitting in `someday`/`resources`) into the folder-per-bucket layout. |
-| `migrate-today-since` | `migrateTodaySince()` | Backfills a missing `today_since` on `today` notes from their `created` date. |
-| `migrate-timestamps` | `migrateTimestamps()` | Rewrites full ISO datetime values left in frontmatter (`...T...`) to plain dates. |
-| `migrate-bucket-mismatch` | `migrateBucketMismatch()` | Relocates a note whose `bucket` field disagrees with the directory it sits in, and quarantines filename duplicates across bucket dirs (loser marked dismissed, moved to `brain/.archive/duplicates/` — never deleted). |
-| `migrate-delegado-list` | `migrateDelegadoToList()` | Rewrites a legacy scalar `delegado_a: Juan` as a single-element list `["Juan"]`. |
+| Migration | What it normalizes |
+|-----------|--------------------|
+| `migrateFolderSplit()` | One-time move of notes out of the legacy shared `brain/inbox/` (and done/dismissed items sitting in `someday`/`resources`) into the folder-per-bucket layout. |
+| `migrateTodaySince()` | Backfills a missing `today_since` on `today` notes from their `created` date. |
+| `migrateTimestamps()` | Rewrites full ISO datetime values left in frontmatter (`...T...`) to plain dates. |
+| `migrateBucketMismatch()` | Relocates a note whose `bucket` field disagrees with the directory it sits in, and quarantines filename duplicates across bucket dirs (loser marked dismissed, moved to `brain/.archive/duplicates/` — never deleted). |
+| `migrateDelegadoToList()` | Rewrites a legacy scalar `delegado_a: Juan` as a single-element list `["Juan"]`. |
 
-They are invoked in that order in the constructor — `migrate-folder-split` first (it moves files into the right directories) so that `migrate-bucket-mismatch` afterwards sees each note already in its bucket folder.
+They are invoked in that order in the constructor — folder-split first (it moves files into the right directories) so that bucket-mismatch afterwards sees each note already in its bucket folder.
 
 ## Event log & undo
 

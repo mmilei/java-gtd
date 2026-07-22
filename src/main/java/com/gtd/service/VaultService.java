@@ -61,11 +61,7 @@ public class VaultService {
             @Value("${gtd.areas}") List<String> areas,
             EventLog eventLog,
             ObjectMapper mapper,
-            @Value("${gtd.vault.migrate-today-since:true}") boolean migrateTodaySinceEnabled,
-            @Value("${gtd.vault.migrate-timestamps:true}") boolean migrateTimestampsEnabled,
-            @Value("${gtd.vault.migrate-bucket-mismatch:true}") boolean migrateBucketMismatchEnabled,
-            @Value("${gtd.vault.migrate-delegado-list:true}") boolean migrateDelegadoListEnabled,
-            @Value("${gtd.vault.migrate-folder-split:true}") boolean migrateFolderSplitEnabled) {
+            @Value("${gtd.vault.migrations-enabled:true}") boolean migrationsEnabled) {
         this.vaultPath      = vaultPath;
         this.mapper         = mapper;
         this.areaVocabulary = areas.stream().map(String::strip).filter(a -> !a.isBlank()).toList();
@@ -88,11 +84,13 @@ public class VaultService {
         } catch (IOException e) {
             log.error("Could not create vault directories: {}", e.getMessage());
         }
-        if (migrateFolderSplitEnabled) migrateFolderSplit();
-        if (migrateTodaySinceEnabled) migrateTodaySince();
-        if (migrateTimestampsEnabled) migrateTimestamps();
-        if (migrateBucketMismatchEnabled) migrateBucketMismatch();
-        if (migrateDelegadoListEnabled) migrateDelegadoToList();
+        if (migrationsEnabled) {
+            migrateFolderSplit();
+            migrateTodaySince();
+            migrateTimestamps();
+            migrateBucketMismatch();
+            migrateDelegadoToList();
+        }
     }
 
     public String write(Map<String, Object> item, Actor actor) {
@@ -299,16 +297,6 @@ public class VaultService {
         mutate(filename, discardDir, actor, "dismiss", confirmation, chatRef, item -> {
             item.put("status", "dismissed");
             item.putIfAbsent("discarded_date", LocalDate.now().toString());
-        });
-    }
-
-    // TODO: not yet wired to any endpoint/prompt — utilizar en el flujo/prompt cuando el
-    // classifier o el frontend necesiten "agregar" en vez de "reemplazar" el body de una tarea.
-    public void appendToTask(String filename, String append, Actor actor) {
-        mutate(filename, actor, "update", item -> {
-            String body = (String) item.remove("body");
-            String newBody = (body == null || body.isBlank()) ? append : body + "\n" + append;
-            item.put("_body_override", newBody);
         });
     }
 
@@ -533,48 +521,37 @@ public class VaultService {
         legacyActiveDirs.add(somedayDir);
         legacyActiveDirs.add(resourcesDir);
 
-        for (Path dir : legacyActiveDirs) {
-            try (Stream<Path> files = Files.list(dir)) {
-                files.filter(p -> p.toString().endsWith(".md"))
-                     .forEach(p -> migrateFileToBucketDir(dir, p));
-            } catch (IOException e) {
-                log.warn("migrateFolderSplit: could not list {}: {}", dir, e.getMessage());
-            }
-        }
+        forEachMarkdownFile(legacyActiveDirs, "migrateFolderSplit", this::migrateFileToBucketDir);
     }
 
-    private void migrateFileToBucketDir(Path sourceDir, Path p) {
-        try {
-            String content = Files.readString(p);
-            Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
-            if (item.get("bucket") == null) return; // non-GTD note, leave in place
+    private void migrateFileToBucketDir(Path sourceDir, Path p) throws Exception {
+        String content = Files.readString(p);
+        Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
+        if (item.get("bucket") == null) return; // non-GTD note, leave in place
 
-            // done/dismissed routing delegates to expectedDirFor() — the same method
-            // migrateBucketMismatch() uses — so the two migrations can't silently diverge on
-            // where a completed/discarded item belongs.
-            String status = String.valueOf(item.getOrDefault("status", ""));
-            Path targetDir;
-            if ("done".equals(status)) {
-                targetDir = expectedDirFor(item);
-                item.putIfAbsent("done_date", bestEffortCompletionDate(item));
-            } else if ("dismissed".equals(status)) {
-                targetDir = expectedDirFor(item);
-                item.putIfAbsent("discarded_date", bestEffortCompletionDate(item));
-            } else if (sourceDir.equals(legacyInboxDir)) {
-                targetDir = dirFor(String.valueOf(item.get("bucket")));
-            } else {
-                return; // open someday/resources item already lives in the right place
-            }
-
-            Path dest = targetDir.resolve(p.getFileName());
-            if (dest.equals(p)) return;
-            String body = (String) item.remove("body");
-            moveAtomically(p, dest);
-            Files.writeString(dest, MarkdownSerializer.serialize(item, body));
-            log.info("migrateFolderSplit: moved {} -> {}", p.getFileName(), targetDir);
-        } catch (Exception e) {
-            log.warn("migrateFolderSplit: skipping {}: {}", p.getFileName(), e.getMessage());
+        // done/dismissed routing delegates to expectedDirFor() — the same method
+        // migrateBucketMismatch() uses — so the two migrations can't silently diverge on
+        // where a completed/discarded item belongs.
+        String status = String.valueOf(item.getOrDefault("status", ""));
+        Path targetDir;
+        if ("done".equals(status)) {
+            targetDir = expectedDirFor(item);
+            item.putIfAbsent("done_date", bestEffortCompletionDate(item));
+        } else if ("dismissed".equals(status)) {
+            targetDir = expectedDirFor(item);
+            item.putIfAbsent("discarded_date", bestEffortCompletionDate(item));
+        } else if (sourceDir.equals(legacyInboxDir)) {
+            targetDir = dirFor(String.valueOf(item.get("bucket")));
+        } else {
+            return; // open someday/resources item already lives in the right place
         }
+
+        Path dest = targetDir.resolve(p.getFileName());
+        if (dest.equals(p)) return;
+        String body = (String) item.remove("body");
+        moveAtomically(p, dest);
+        Files.writeString(dest, MarkdownSerializer.serialize(item, body));
+        log.info("migrateFolderSplit: moved {} -> {}", p.getFileName(), targetDir);
     }
 
     /** Best available approximation for a retroactive done_date/discarded_date: not exact for items archived before this migration. */
@@ -587,50 +564,30 @@ public class VaultService {
 
     /** Rewrites legacy scalar delegado_a ("Juan") as a single-element list (["Juan"]) on disk. */
     private void migrateDelegadoToList() {
-        for (Path dir : allDirs) {
-            try (Stream<Path> files = Files.list(dir)) {
-                files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
-                    try {
-                        String content = Files.readString(p);
-                        Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
-                        if (item.get("delegado_a") instanceof String) {
-                            String body = (String) item.remove("body");
-                            item.put("delegado_a", delegadoAsList(item.get("delegado_a")));
-                            Files.writeString(p, MarkdownSerializer.serialize(item, body));
-                        }
-                    } catch (Exception e) {
-                        log.warn("migrateDelegadoToList: skipping {}: {}", p.getFileName(), e.getMessage());
-                    }
-                });
-            } catch (IOException e) {
-                log.warn("migrateDelegadoToList: could not list {}: {}", dir, e.getMessage());
+        forEachMarkdownFile(allDirs, "migrateDelegadoToList", (dir, p) -> {
+            String content = Files.readString(p);
+            Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
+            if (item.get("delegado_a") instanceof String) {
+                String body = (String) item.remove("body");
+                item.put("delegado_a", delegadoAsList(item.get("delegado_a")));
+                Files.writeString(p, MarkdownSerializer.serialize(item, body));
             }
-        }
+        });
     }
 
     private void migrateTodaySince() {
-        for (Path dir : List.of(todayDir)) {
-            try (Stream<Path> files = Files.list(dir)) {
-                files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
-                    try {
-                        String content = Files.readString(p);
-                        Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
-                        if ("today".equals(item.get("bucket")) && item.get("today_since") == null) {
-                            String created = (String) item.get("created");
-                            if (created != null) {
-                                String body = (String) item.remove("body");
-                                item.put("today_since", created);
-                                Files.writeString(p, MarkdownSerializer.serialize(item, body));
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.warn("migrateTodaySince: skipping {}: {}", p.getFileName(), e.getMessage());
-                    }
-                });
-            } catch (IOException e) {
-                log.warn("migrateTodaySince: could not list {}: {}", dir, e.getMessage());
+        forEachMarkdownFile(List.of(todayDir), "migrateTodaySince", (dir, p) -> {
+            String content = Files.readString(p);
+            Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
+            if ("today".equals(item.get("bucket")) && item.get("today_since") == null) {
+                String created = (String) item.get("created");
+                if (created != null) {
+                    String body = (String) item.remove("body");
+                    item.put("today_since", created);
+                    Files.writeString(p, MarkdownSerializer.serialize(item, body));
+                }
             }
-        }
+        });
     }
 
     /**
@@ -796,7 +753,7 @@ public class VaultService {
             String body = (String) item.remove("body");
             modifier.accept(item);
 
-            // _body_override permite que appendToTask/replaceBody cambien el body
+            // _body_override permite que replaceBody cambie el body
             String newBody = (String) item.remove("_body_override");
             if (newBody == null) newBody = body;
 
@@ -905,25 +862,37 @@ public class VaultService {
 
     private void migrateTimestamps() {
         java.util.regex.Pattern TS_IN_YAML = java.util.regex.Pattern.compile("\\d{4}-\\d{2}-\\d{2}T");
-        for (Path dir : allDirs) {
+        forEachMarkdownFile(allDirs, "migrateTimestamps", (dir, p) -> {
+            String content = Files.readString(p);
+            int fmEnd = content.indexOf("\n---", content.indexOf('\n') + 1);
+            String frontmatter = fmEnd > 0 ? content.substring(0, fmEnd) : "";
+            if (!TS_IN_YAML.matcher(frontmatter).find()) return;
+
+            Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
+            String body = (String) item.remove("body");
+            Files.writeString(p, MarkdownSerializer.serialize(item, body));
+            log.info("migrateTimestamps: fixed {}", p.getFileName());
+        });
+    }
+
+    @FunctionalInterface
+    private interface FileMigrationStep {
+        void apply(Path dir, Path file) throws Exception;
+    }
+
+    /** Shared scan-every-file-in-these-dirs loop for the migrations above: per-file failures are logged and skipped, never thrown. */
+    private void forEachMarkdownFile(List<Path> dirs, String migrationName, FileMigrationStep step) {
+        for (Path dir : dirs) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {
                     try {
-                        String content = Files.readString(p);
-                        int fmEnd = content.indexOf("\n---", content.indexOf('\n') + 1);
-                        String frontmatter = fmEnd > 0 ? content.substring(0, fmEnd) : "";
-                        if (!TS_IN_YAML.matcher(frontmatter).find()) return;
-
-                        Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
-                        String body = (String) item.remove("body");
-                        Files.writeString(p, MarkdownSerializer.serialize(item, body));
-                        log.info("migrateTimestamps: fixed {}", p.getFileName());
+                        step.apply(dir, p);
                     } catch (Exception e) {
-                        log.warn("migrateTimestamps: skipping {}: {}", p.getFileName(), e.getMessage());
+                        log.warn("{}: skipping {}: {}", migrationName, p.getFileName(), e.getMessage());
                     }
                 });
             } catch (IOException e) {
-                log.warn("migrateTimestamps: could not list {}: {}", dir, e.getMessage());
+                log.warn("{}: could not list {}: {}", migrationName, dir, e.getMessage());
             }
         }
     }

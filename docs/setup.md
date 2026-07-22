@@ -82,7 +82,7 @@ The API creates these folders on startup if missing — one directory per bucket
     archive/             rotated-out events/transcript lines, never deleted
 ```
 
-The first startup against an existing `brain/inbox/` vault (pre-2026-07 layout) runs a one-time migration (`gtd.vault.migrate-folder-split`) that relocates every file into the folder matching its `bucket`/`status`; anything without a `bucket` field (non-GTD notes) is left untouched.
+The first startup against an existing `brain/inbox/` vault (pre-2026-07 layout) runs a one-time migration (part of `gtd.vault.migrations-enabled`) that relocates every file into the folder matching its `bucket`/`status`; anything without a `bucket` field (non-GTD notes) is left untouched.
 
 Notes are plain Markdown with YAML frontmatter — readable and editable from Obsidian or any editor while the API runs.
 
