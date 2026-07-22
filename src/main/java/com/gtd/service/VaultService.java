@@ -253,6 +253,36 @@ public class VaultService {
         if (!project.isEmpty()) projects.add(project);
     }
 
+    /**
+     * Sorted, deduplicated list of every tag currently in use across the vault, including
+     * done/discarded tasks — same continuity reasoning as knownProjects(): a tag shouldn't drop
+     * out of the classifier's context just because every task that used it is finished. Fed to
+     * the classifier so it reuses an existing tag ("compras") instead of inventing a
+     * near-duplicate ("shopping", "super"). Returns an empty list when the vault has no tagged
+     * items yet.
+     */
+    public List<String> knownTags() {
+        Set<String> tags = new TreeSet<>();
+        listAll().forEach((bucket, items) -> items.forEach(item -> addTags(tags, item)));
+        for (Path dir : List.of(doneDir, discardDir)) {
+            try (Stream<Path> files = Files.list(dir)) {
+                files.filter(p -> p.toString().endsWith(".md"))
+                     .map(this::readFile)
+                     .filter(Objects::nonNull)
+                     .forEach(item -> addTags(tags, item));
+            } catch (IOException e) { /* empty directory, skip */ }
+        }
+        return new ArrayList<>(tags);
+    }
+
+    private static void addTags(Set<String> tags, Map<String, Object> item) {
+        if (!(item.get("tags") instanceof List<?> itemTags)) return;
+        for (Object t : itemTags) {
+            String tag = String.valueOf(t).strip();
+            if (!tag.isEmpty()) tags.add(tag);
+        }
+    }
+
     public void markDone(String filename, Actor actor) {
         mutate(filename, doneDir, actor, "done", item -> {
             item.put("status", "done");

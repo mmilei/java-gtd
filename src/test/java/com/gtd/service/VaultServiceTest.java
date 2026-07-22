@@ -724,6 +724,61 @@ class VaultServiceTest {
     }
 
     @Test
+    void knownTagsShouldReturnSortedDeduplicatedValuesAcrossBuckets(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> a = new java.util.LinkedHashMap<>();
+        a.put("bucket", "today");
+        a.put("title", "Task A");
+        a.put("tags", java.util.List.of("compras", "hogar"));
+        vault.write(a, Actor.USER);
+
+        // duplicate tag in another bucket — must be deduplicated
+        Map<String, Object> b = new java.util.LinkedHashMap<>();
+        b.put("bucket", "backlog");
+        b.put("title", "Task B");
+        b.put("tags", java.util.List.of("compras", "salud"));
+        vault.write(b, Actor.USER);
+
+        // no tags field at all — must be ignored, not crash
+        Map<String, Object> c = new java.util.LinkedHashMap<>();
+        c.put("bucket", "backlog");
+        c.put("title", "Task C");
+        vault.write(c, Actor.USER);
+
+        assertThat(vault.knownTags()).containsExactly("compras", "hogar", "salud");
+    }
+
+    @Test
+    void knownTagsShouldReturnEmptyWhenNoneExist(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        assertThat(vault.knownTags()).isEmpty();
+    }
+
+    @Test
+    void knownTagsShouldIncludeTagsFromDoneAndDiscardedTasks(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> done = new java.util.LinkedHashMap<>();
+        done.put("bucket", "today");
+        done.put("title", "Ship the release");
+        done.put("tags", java.util.List.of("trabajo"));
+        String doneFilename = vault.write(done, Actor.USER);
+        vault.markDone(doneFilename, Actor.USER);
+
+        Map<String, Object> discarded = new java.util.LinkedHashMap<>();
+        discarded.put("bucket", "backlog");
+        discarded.put("title", "Abandoned spike");
+        discarded.put("tags", java.util.List.of("mascotas"));
+        String discardedFilename = vault.write(discarded, Actor.USER);
+        vault.dismissItem(discardedFilename, Actor.USER);
+
+        // an established tag shouldn't disappear from the known-tags context just because
+        // every one of its tasks is finished or dropped
+        assertThat(vault.knownTags()).containsExactly("mascotas", "trabajo");
+    }
+
+    @Test
     void shouldNormalizeDelegadoAToListOnWriteAndPatch(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
 

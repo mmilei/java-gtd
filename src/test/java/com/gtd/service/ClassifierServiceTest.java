@@ -115,22 +115,23 @@ class ClassifierServiceTest {
     }
 
     @Test
-    void buildPromptSubstitutesKnownProjectsAndValidAreasPlaceholders() {
-        String template = "today={today} ctx={user_context} tasks={open_tasks} projects={known_projects} areas={valid_areas} msg={message}";
+    void buildPromptSubstitutesKnownProjectsKnownTagsAndValidAreasPlaceholders() {
+        String template = "today={today} ctx={user_context} tasks={open_tasks} projects={known_projects} tags={known_tags} areas={valid_areas} msg={message}";
         String result = ClassifierService.buildPrompt(
-                template, "2026-07-07", "profile", "[]", "java-gtd, frontend-gtd", "personal, friends", "fix the bug");
+                template, "2026-07-07", "profile", "[]", "java-gtd, frontend-gtd", "compras, salud", "personal, friends", "fix the bug");
         assertThat(result).isEqualTo(
-                "today=2026-07-07 ctx=profile tasks=[] projects=java-gtd, frontend-gtd areas=personal, friends msg=fix the bug");
+                "today=2026-07-07 ctx=profile tasks=[] projects=java-gtd, frontend-gtd tags=compras, salud areas=personal, friends msg=fix the bug");
         assertThat(result).doesNotContain("{known_projects}");
+        assertThat(result).doesNotContain("{known_tags}");
         assertThat(result).doesNotContain("{valid_areas}");
     }
 
     @Test
-    void formatKnownProjectsJoinsWithCommasOrMarksNoneYet() {
-        assertThat(ClassifierService.formatKnownProjects(List.of())).isEqualTo("(none yet)");
-        assertThat(ClassifierService.formatKnownProjects(List.of("java-gtd")))
+    void formatCsvOrNoneYetJoinsWithCommasOrMarksNoneYet() {
+        assertThat(ClassifierService.formatCsvOrNoneYet(List.of())).isEqualTo("(none yet)");
+        assertThat(ClassifierService.formatCsvOrNoneYet(List.of("java-gtd")))
                 .isEqualTo("java-gtd");
-        assertThat(ClassifierService.formatKnownProjects(List.of("java-gtd", "frontend-gtd")))
+        assertThat(ClassifierService.formatCsvOrNoneYet(List.of("java-gtd", "frontend-gtd")))
                 .isEqualTo("java-gtd, frontend-gtd");
     }
 
