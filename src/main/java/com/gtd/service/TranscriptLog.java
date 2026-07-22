@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 /**
@@ -36,6 +37,10 @@ public class TranscriptLog {
     private final AtomicLong idCounter;
     /** Cheap gate for rotateStaleMonths(): skip the full read/reparse unless the calendar month actually rolled over. */
     private volatile String lastCheckedMonth;
+    // Single lock guarding append/tail (and, transitively, monthly rotation) — replaces the old
+    // `synchronized` monitors that pin the carrier thread under virtual threads. A read must not
+    // land mid-rotation and see a truncated transcript.jsonl, so both methods share this lock.
+    private final ReentrantLock lock = new ReentrantLock();
 
     /** Convenience constructor for tests that don't care which ObjectMapper instance is used. */
     TranscriptLog(String vaultPath) {
@@ -51,24 +56,34 @@ public class TranscriptLog {
         this.idCounter = new AtomicLong(lastIdNumber(readAll()));
     }
 
-    public synchronized ChatMessage append(String role, String text, boolean fallback) {
-        ChatMessage stamped = new ChatMessage("", Instant.now().toString(), role, text, fallback).withId(nextId());
+    public ChatMessage append(String role, String text, boolean fallback) {
+        lock.lock();
         try {
-            Files.createDirectories(transcriptFile.getParent());
-            Files.writeString(transcriptFile, mapper.writeValueAsString(stamped) + "\n",
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            ChatMessage stamped = new ChatMessage("", Instant.now().toString(), role, text, fallback).withId(nextId());
+            try {
+                Files.createDirectories(transcriptFile.getParent());
+                Files.writeString(transcriptFile, mapper.writeValueAsString(stamped) + "\n",
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            rotateStaleMonths();
+            return stamped;
+        } finally {
+            lock.unlock();
         }
-        rotateStaleMonths();
-        return stamped;
     }
 
-    /** synchronized on the same monitor as append()/rotateStaleMonths() — otherwise a read here can land mid-rotation and see a truncated transcript.jsonl. */
-    public synchronized List<ChatMessage> tail(int limit) {
-        List<ChatMessage> all = readAll();
-        if (limit <= 0 || all.size() <= limit) return all;
-        return all.subList(all.size() - limit, all.size());
+    /** Holds the same lock as append()/rotateStaleMonths() — otherwise a read here can land mid-rotation and see a truncated transcript.jsonl. */
+    public List<ChatMessage> tail(int limit) {
+        lock.lock();
+        try {
+            List<ChatMessage> all = readAll();
+            if (limit <= 0 || all.size() <= limit) return all;
+            return all.subList(all.size() - limit, all.size());
+        } finally {
+            lock.unlock();
+        }
     }
 
     private String nextId() {

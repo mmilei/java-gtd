@@ -65,6 +65,22 @@ class ChatControllerTest {
     }
 
     @Test
+    void chatCreatePersistsOriginalMessageAsCaptureSource() throws Exception {
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "create", "bucket", "today", "title", "Call the doctor",
+                        "body", "", "due", "", "delegado_a", "", "tags", List.of())
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+        when(vault.write(any(), any())).thenReturn("20260625-120000-call-the-doctor.md");
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"call the doctor today\"}"))
+                .andExpect(status().isOk());
+        verify(vault).write(argThat(m -> "call the doctor today".equals(m.get("capture_source"))), eq(Actor.LLM));
+    }
+
+    @Test
     void chatLlmProviderErrorIsClassifiedByGlobalHandler() throws Exception {
         when(classifier.classifyAll(any(), any())).thenThrow(new NonTransientAiException(
                 "429 - {\"error\":{\"message\":\"Rate limit reached\",\"code\":\"rate_limit_exceeded\"}}"));

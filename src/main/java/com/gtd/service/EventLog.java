@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 /**
@@ -40,6 +41,11 @@ public class EventLog {
     private final AtomicLong idCounter;
     /** Cheap gate for rotateIfNeeded() so a normal append doesn't re-read/re-parse the whole active log. */
     private final AtomicLong activeCount;
+    // Single lock guarding append/tail/nextUndoable/undoableStack (and, transitively, rotation)
+    // — replaces the old `synchronized` monitors, which pin the carrier thread under virtual
+    // threads. A read must still not land mid-rotation and see a truncated events.jsonl, so every
+    // method that touches the file shares this one lock.
+    private final ReentrantLock lock = new ReentrantLock();
 
     /** Convenience constructor for tests that don't care which ObjectMapper instance is used. */
     EventLog(String vaultPath) {
@@ -57,46 +63,66 @@ public class EventLog {
         this.activeCount = new AtomicLong(initial.size());
     }
 
-    public synchronized Event append(Event event) {
-        Event stamped = event.withId(nextId());
+    public Event append(Event event) {
+        lock.lock();
         try {
-            Files.createDirectories(eventsFile.getParent());
-            Files.writeString(eventsFile, mapper.writeValueAsString(stamped) + "\n",
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            Event stamped = event.withId(nextId());
+            try {
+                Files.createDirectories(eventsFile.getParent());
+                Files.writeString(eventsFile, mapper.writeValueAsString(stamped) + "\n",
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            if (activeCount.incrementAndGet() > MAX_ACTIVE_EVENTS) {
+                rotateIfNeeded();
+            }
+            return stamped;
+        } finally {
+            lock.unlock();
         }
-        if (activeCount.incrementAndGet() > MAX_ACTIVE_EVENTS) {
-            rotateIfNeeded();
-        }
-        return stamped;
     }
 
-    /** synchronized on the same monitor as append()/rotateIfNeeded() — otherwise a read here can land mid-rotation and see a truncated events.jsonl. */
-    public synchronized List<Event> tail(int limit, Actor actorFilter, String opFilter) {
-        List<Event> filtered = readAll().stream()
-            .filter(e -> actorFilter == null || actorFilter.toJson().equals(e.actor()))
-            .filter(e -> opFilter == null || opFilter.equals(e.op()))
-            .collect(Collectors.toList());
-        if (limit <= 0 || filtered.size() <= limit) return filtered;
-        return filtered.subList(filtered.size() - limit, filtered.size());
+    /** Holds the same lock as append()/rotateIfNeeded() — otherwise a read here can land mid-rotation and see a truncated events.jsonl. */
+    public List<Event> tail(int limit, Actor actorFilter, String opFilter) {
+        lock.lock();
+        try {
+            List<Event> filtered = readAll().stream()
+                .filter(e -> actorFilter == null || actorFilter.toJson().equals(e.actor()))
+                .filter(e -> opFilter == null || opFilter.equals(e.op()))
+                .collect(Collectors.toList());
+            if (limit <= 0 || filtered.size() <= limit) return filtered;
+            return filtered.subList(filtered.size() - limit, filtered.size());
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Most recent mutation not already undone — undo is strictly sequential, one step at a time. */
-    public synchronized Optional<Event> nextUndoable() {
-        List<Event> mutations = undoneFiltered(readAll());
-        return mutations.isEmpty() ? Optional.empty() : Optional.of(mutations.get(mutations.size() - 1));
+    public Optional<Event> nextUndoable() {
+        lock.lock();
+        try {
+            List<Event> mutations = undoneFiltered(readAll());
+            return mutations.isEmpty() ? Optional.empty() : Optional.of(mutations.get(mutations.size() - 1));
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Non-destructive peek of what's available to undo, most recent first, capped at MAX_UNDO_DEPTH. */
-    public synchronized List<Event> undoableStack() {
-        List<Event> mutations = undoneFiltered(readAll());
-        List<Event> capped = mutations.size() > MAX_UNDO_DEPTH
-            ? mutations.subList(mutations.size() - MAX_UNDO_DEPTH, mutations.size())
-            : mutations;
-        List<Event> mostRecentFirst = new ArrayList<>(capped);
-        Collections.reverse(mostRecentFirst);
-        return mostRecentFirst;
+    public List<Event> undoableStack() {
+        lock.lock();
+        try {
+            List<Event> mutations = undoneFiltered(readAll());
+            List<Event> capped = mutations.size() > MAX_UNDO_DEPTH
+                ? mutations.subList(mutations.size() - MAX_UNDO_DEPTH, mutations.size())
+                : mutations;
+            List<Event> mostRecentFirst = new ArrayList<>(capped);
+            Collections.reverse(mostRecentFirst);
+            return mostRecentFirst;
+        } finally {
+            lock.unlock();
+        }
     }
 
     private static List<Event> undoneFiltered(List<Event> all) {
