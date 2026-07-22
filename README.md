@@ -45,6 +45,22 @@ Inspired by [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_D
 - **Time estimates** — the classifier infers `estimate_minutes` so the frontend can project when your day ends.
 - **Voice input** — audio transcription endpoint feeding the same pipeline.
 
+## Day-to-day workflow
+
+The API is a **capture-and-organize layer that sits on top of a folder you already own** — your Obsidian vault. A typical loop:
+
+1. **Capture, in plain language.** Throughout the day you fire messages at `POST /api/chat` — typed or dictated (the transcription endpoint turns a voice memo into the same text). *"pay the gas bill friday"*, *"someday read the Crafting Interpreters book"*, *"ask Cami for the signed contract"*. No forms, no picking a list.
+2. **The LLM files it for you.** Each message runs through the GTD decision tree and lands as a Markdown note in the right bucket folder — `brain/today/`, `brain/backlog/`, `brain/waiting/`, `brain/someday/`, or `brain/resources/` — with `due`, context `tags`, a rough `estimate_minutes`, and (when clear) `project`/`location`/`area` already filled in.
+3. **Follow up conversationally.** Later messages operate on what's already there: *"move the gas bill to today"*, *"mark the contract one as done"*, *"rewrite the note on X"*. The backend resolves which task you mean by title; destructive edits come back as a confirmation you approve before anything is overwritten. Slipped up? `POST /api/undo` walks the last mutation back.
+4. **Live in Obsidian.** Because every task is just a frontmattered `.md` file on disk, you open the same vault in Obsidian and get the full second-brain experience for free — backlinks, Dataview queries over `tags`/`due`/`area`, graph view, and hand-editing. Edits you make in Obsidian and edits the API makes are the same files; on the next startup `VaultService` quietly self-heals anything that drifted (see [docs/architecture.md](docs/architecture.md)).
+
+### How it plugs into Obsidian
+
+- **The vault is the source of truth**, not a database. Point `GTD_VAULT_PATH` at your existing Obsidian vault (or a subfolder) and the API writes into `brain/<bucket>/`. Nothing is locked away — the notes stay portable, greppable, and versionable with git.
+- **Frontmatter is the contract.** Each note carries `type`, `bucket`, `status`, `created`, `due`, `tags`, etc. — exactly the fields Obsidian's Properties UI, Dataview, and Bases read, so you can build task dashboards over the same data the API classifies into.
+- **Two-way editing.** The API never assumes it's the only writer: it re-reads notes on each operation and runs idempotent startup migrations, so a note you moved or retagged by hand in Obsidian is respected, not clobbered.
+- **Frontend optional.** The [gtd-frontend](https://github.com/mmilei/gtd-frontend) web client ([live demo](https://mmilei.github.io/gtd-frontend)) is a convenient face over these endpoints, but the whole loop works headless — `curl`, a shortcut, or Obsidian itself.
+
 ## Stack
 
 | Layer | Tech |
