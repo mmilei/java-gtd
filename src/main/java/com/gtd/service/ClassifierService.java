@@ -121,7 +121,7 @@ public class ClassifierService {
 
         // Level 1
         String level1 = buildPrompt(promptTemplate, today, userContext, openTasksJson, knownProjects, knownTags, validAreas, message);
-        String response1 = call(level1);
+        String response1 = call(LlmAction.TRIAGE, level1);
         try {
             ops = parseJsonList(response1);
         } catch (Exception e) {
@@ -131,7 +131,7 @@ public class ClassifierService {
         if (ops == null || allNonFiling(ops)) {
             // Level 2
             String level2 = buildPrompt(fallbackTemplate, today, userContext, openTasksJson, knownProjects, knownTags, validAreas, message);
-            String response2 = call(level2);
+            String response2 = call(LlmAction.TRIAGE, level2);
             try {
                 ops = parseJsonList(response2);
             } catch (Exception e) {
@@ -181,7 +181,7 @@ public class ClassifierService {
                 str(op.get("title")), str(op.get("body")), str(op.get("bucket")),
                 knownProjects, knownTags, validAreas);
         try {
-            Map<String, Object> enriched = parseJsonObject(call(prompt));
+            Map<String, Object> enriched = parseJsonObject(call(LlmAction.ENRICHMENT, prompt));
             for (String field : ENRICH_FIELDS) {
                 if (enriched.containsKey(field)) op.put(field, enriched.get(field));
             }
@@ -203,7 +203,7 @@ public class ClassifierService {
                 str(op.get("title")), str(op.get("body")), str(op.get("bucket")),
                 knownProjects, knownTags, validAreas);
         try {
-            Map<String, Object> resolved = parseJsonObject(call(prompt));
+            Map<String, Object> resolved = parseJsonObject(call(LlmAction.RESOLVER, prompt));
             if (resolved.get("bucket") != null) op.put("bucket", resolved.get("bucket"));
             if (resolved.containsKey("area"))   op.put("area", resolved.get("area"));
             if (resolved.containsKey("tags"))   op.put("tags", resolved.get("tags"));
@@ -397,8 +397,8 @@ public class ClassifierService {
         return tokens;
     }
 
-    private String call(String promptText) {
-        return llmProviders.complete(promptText);
+    private String call(LlmAction action, String promptText) {
+        return llmProviders.complete(action, promptText);
     }
 
     private String serializeTasks(List<Map<String, Object>> openTasks) {

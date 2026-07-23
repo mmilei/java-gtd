@@ -8,6 +8,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.ollama.api.OllamaOptions;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,30 +31,45 @@ class LlmProviderServiceTest {
         return new LlmProviderService(groqChatClient);
     }
 
-    @Test
-    void defaultActiveProviderIsGroq() {
-        LlmProviderService service = newService();
-        Map<String, Object> described = service.describeAll();
-        assertThat(described.get("active")).isEqualTo("GROQ");
+    /** Pulls the active provider for one action out of the per-action describeAll() shape. */
+    @SuppressWarnings("unchecked")
+    private static String activeFor(LlmProviderService service, LlmAction action) {
+        List<Map<String, Object>> actions =
+            (List<Map<String, Object>>) service.describeAll().get("actions");
+        return actions.stream()
+            .filter(a -> action.name().equals(a.get("action")))
+            .map(a -> (String) a.get("active"))
+            .findFirst().orElseThrow();
     }
 
     @Test
-    void selectKnownProviderSwitchesActive() {
+    void defaultActiveProviderIsGroqForEveryAction() {
+        LlmProviderService service = newService();
+        for (LlmAction action : LlmAction.values()) {
+            assertThat(activeFor(service, action)).isEqualTo("GROQ");
+        }
+    }
+
+    @Test
+    void selectSwitchesOnlyThatActionLeavingOthersUntouched() {
         LlmProviderService service = newService();
         // ollamaChatClient is package-private (@Autowired(required = false)) — inject a mock
         // directly to exercise the real "provider available" path without a Spring context.
         service.ollamaChatClient = mock(ChatClient.class);
 
-        assertThat(service.select("OLLAMA")).isTrue();
-        assertThat(service.describeAll().get("active")).isEqualTo("OLLAMA");
+        assertThat(service.select(LlmAction.TRIAGE, "OLLAMA")).isTrue();
+        assertThat(activeFor(service, LlmAction.TRIAGE)).isEqualTo("OLLAMA");
+        // per-action independence: switching Triage must not touch Enrichment/Resolver
+        assertThat(activeFor(service, LlmAction.ENRICHMENT)).isEqualTo("GROQ");
+        assertThat(activeFor(service, LlmAction.RESOLVER)).isEqualTo("GROQ");
     }
 
     @Test
     void selectUnknownProviderReturnsFalse() {
         LlmProviderService service = newService();
-        assertThat(service.select("BOGUS")).isFalse();
+        assertThat(service.select(LlmAction.TRIAGE, "BOGUS")).isFalse();
         // active provider unchanged
-        assertThat(service.describeAll().get("active")).isEqualTo("GROQ");
+        assertThat(activeFor(service, LlmAction.TRIAGE)).isEqualTo("GROQ");
     }
 
     @Test
@@ -61,13 +77,13 @@ class LlmProviderServiceTest {
         // ollamaChatClient field stays null: no Spring context wiring it in a plain unit test,
         // which mirrors "Ollama not installed" (the @ConditionalOnProperty bean never created).
         LlmProviderService service = newService();
-        assertThat(service.select("OLLAMA")).isFalse();
+        assertThat(service.select(LlmAction.TRIAGE, "OLLAMA")).isFalse();
     }
 
     @Test
     void selectIsCaseInsensitive() {
         LlmProviderService service = newService();
-        assertThat(service.select("groq")).isTrue();
+        assertThat(service.select(LlmAction.TRIAGE, "groq")).isTrue();
     }
 
     @Test
@@ -115,26 +131,45 @@ class LlmProviderServiceTest {
         LlmProviderService service = spy(newService());
         ChatClient ollama = mock(ChatClient.class);
         service.ollamaChatClient = ollama;
-        service.select("OLLAMA");
+        service.select(LlmAction.TRIAGE, "OLLAMA");
         doReturn(false).when(service).ollamaAvailable(); // Ollama down
         stubContent(groqChatClient, "groq-result");
 
-        String out = service.complete("clasificá esto");
+        String out = service.complete(LlmAction.TRIAGE, "clasificá esto");
 
         assertThat(out).isEqualTo("groq-result");
-        verify(ollama, never()).prompt();                                  // Ollama never dispatched
-        assertThat(service.describeAll().get("active")).isEqualTo("OLLAMA"); // preference preserved
+        verify(ollama, never()).prompt();                              // Ollama never dispatched
+        assertThat(activeFor(service, LlmAction.TRIAGE)).isEqualTo("OLLAMA"); // preference preserved
+    }
+
+    @Test
+    void autoSwitchIsPerActionIndependent() {
+        // Triage on a downed Ollama falls back to Groq for its call; Enrichment (still on Groq)
+        // is completely independent — proves the fallback routes per-action, not globally.
+        LlmProviderService service = spy(newService());
+        ChatClient ollama = mock(ChatClient.class);
+        service.ollamaChatClient = ollama;
+        service.select(LlmAction.TRIAGE, "OLLAMA");   // only Triage on Ollama
+        doReturn(false).when(service).ollamaAvailable(); // Ollama down
+        stubContent(groqChatClient, "groq-result");
+
+        assertThat(service.complete(LlmAction.TRIAGE, "triage this")).isEqualTo("groq-result");
+        assertThat(service.complete(LlmAction.ENRICHMENT, "enrich this")).isEqualTo("groq-result");
+
+        verify(ollama, never()).prompt();
+        assertThat(activeFor(service, LlmAction.TRIAGE)).isEqualTo("OLLAMA"); // Triage preference held
+        assertThat(activeFor(service, LlmAction.ENRICHMENT)).isEqualTo("GROQ"); // Enrichment untouched
     }
 
     @Test
     void ollamaAndGroqBothDownPropagatesOriginalError() {
         LlmProviderService service = spy(newService());
         service.ollamaChatClient = mock(ChatClient.class);
-        service.select("OLLAMA");
+        service.select(LlmAction.TRIAGE, "OLLAMA");
         doReturn(false).when(service).ollamaAvailable(); // Ollama down
         when(groqChatClient.prompt()).thenThrow(new RuntimeException("groq 503")); // Groq down too
 
-        assertThatThrownBy(() -> service.complete("clasificá esto"))
+        assertThatThrownBy(() -> service.complete(LlmAction.TRIAGE, "clasificá esto"))
             .isInstanceOf(RuntimeException.class)
             .hasMessage("groq 503"); // clean propagation, not a confusing wrapped error
     }
@@ -144,11 +179,11 @@ class LlmProviderServiceTest {
         LlmProviderService service = spy(newService());
         ChatClient ollama = mock(ChatClient.class);
         service.ollamaChatClient = ollama;
-        service.select("OLLAMA");
+        service.select(LlmAction.TRIAGE, "OLLAMA");
         doReturn(true).when(service).ollamaAvailable(); // Ollama up
         stubContent(ollama, "ollama-result");
 
-        String out = service.complete("clasificá esto");
+        String out = service.complete(LlmAction.TRIAGE, "clasificá esto");
 
         assertThat(out).isEqualTo("ollama-result");
         verify(groqChatClient, never()).prompt(); // no fallback, Groq untouched

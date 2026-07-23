@@ -28,7 +28,7 @@ class ClassifierServiceTest {
         // the format retry (JSON didn't parse) still works: level-1 garbage → retry template → valid ops.
         // The recovered create is confirmed, so it now also triggers Prompt B — hence a 3rd complete().
         LlmProviderService llm = mock(LlmProviderService.class);
-        when(llm.complete(anyString()))
+        when(llm.complete(any(), anyString()))
                 .thenReturn("sorry, I cannot output JSON right now")   // level 1: unparseable
                 .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"X\",\"confirmed\":true}]") // retry: valid
                 .thenReturn("{\"area\":null,\"tags\":[]}");            // Prompt B enrichment
@@ -36,7 +36,9 @@ class ClassifierServiceTest {
         assertThat(r.usedFallback()).isTrue();
         assertThat(r.ops()).hasSize(1);
         assertThat(r.ops().get(0)).containsEntry("op", "create");
-        verify(llm, times(3)).complete(anyString());
+        // level1 + format retry both go to TRIAGE; the recovered confirmed create fires one ENRICHMENT
+        verify(llm, times(2)).complete(eq(LlmAction.TRIAGE), anyString());
+        verify(llm, times(1)).complete(eq(LlmAction.ENRICHMENT), anyString());
     }
 
     // ---- Split B/C pipeline (step 4) ----
@@ -45,7 +47,7 @@ class ClassifierServiceTest {
     void confirmedTrueCreateTriggersPromptBAndMergesEnrichment() {
         // (a) a confirmed create fires exactly one Prompt B call; its fields land on the op
         LlmProviderService llm = mock(LlmProviderService.class);
-        when(llm.complete(anyString()))
+        when(llm.complete(any(), anyString()))
                 .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Comprar pilas\",\"body\":\"para el mouse\",\"confirmed\":true}]") // A
                 .thenReturn("{\"area\":\"hogar\",\"tags\":[\"compras\"],\"project\":null,\"location\":\"super\",\"estimate_minutes\":15}");           // B
         ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("comprar pilas para el mouse", List.of());
@@ -54,14 +56,16 @@ class ClassifierServiceTest {
         assertThat(op).containsEntry("location", "super");
         assertThat(op).containsEntry("estimate_minutes", 15);
         assertThat(op.get("tags")).isEqualTo(List.of("compras"));
-        verify(llm, times(2)).complete(anyString());
+        verify(llm, times(1)).complete(eq(LlmAction.TRIAGE), anyString());
+        verify(llm, times(1)).complete(eq(LlmAction.ENRICHMENT), anyString());
+        verify(llm, never()).complete(eq(LlmAction.RESOLVER), anyString());
     }
 
     @Test
     void promptBParseFailureFilesTaskUnenrichedWithoutRetry() {
         // (b) Prompt B returns non-JSON → the task is filed with what Prompt A gave it, no retry
         LlmProviderService llm = mock(LlmProviderService.class);
-        when(llm.complete(anyString()))
+        when(llm.complete(any(), anyString()))
                 .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Comprar pilas\",\"body\":\"para el mouse\",\"confirmed\":true}]") // A
                 .thenReturn("sorry, no json here");                                                                                                   // B unparseable
         ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("comprar pilas para el mouse", List.of());
@@ -69,14 +73,16 @@ class ClassifierServiceTest {
         assertThat(op).doesNotContainKey("area");
         assertThat(op).doesNotContainKey("location");
         assertThat(op).doesNotContainKey("tags");
-        verify(llm, times(2)).complete(anyString()); // A + one B attempt, no third call
+        // A (TRIAGE) + one B (ENRICHMENT) attempt, no retry, no RESOLVER
+        verify(llm, times(1)).complete(eq(LlmAction.TRIAGE), anyString());
+        verify(llm, times(1)).complete(eq(LlmAction.ENRICHMENT), anyString());
     }
 
     @Test
     void confirmedFalseCreateTriggersPromptCWhichCanResolve() {
         // (c)+(d) an unconfirmed create fires Prompt C; a resolving C upgrades confirmed and fills fields
         LlmProviderService llm = mock(LlmProviderService.class);
-        when(llm.complete(anyString()))
+        when(llm.complete(any(), anyString()))
                 .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Resolver alquiler\",\"body\":\"no sabe\",\"confirmed\":false}]") // A
                 .thenReturn("{\"bucket\":\"backlog\",\"area\":\"finanzas\",\"tags\":[\"finanzas\"],\"confirmed\":true}");                              // C resolves
         ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("tema del alquiler", List.of());
@@ -85,31 +91,38 @@ class ClassifierServiceTest {
         assertThat(op).containsEntry("area", "finanzas");
         assertThat(op.get("tags")).isEqualTo(List.of("finanzas"));
         assertThat(r.usedFallback()).isFalse();
-        verify(llm, times(2)).complete(anyString());
+        // unconfirmed create routes A (TRIAGE) → C (RESOLVER), never B
+        verify(llm, times(1)).complete(eq(LlmAction.TRIAGE), anyString());
+        verify(llm, times(1)).complete(eq(LlmAction.RESOLVER), anyString());
+        verify(llm, never()).complete(eq(LlmAction.ENRICHMENT), anyString());
     }
 
     @Test
     void confirmedFalseCreateStaysUnconfirmedWhenPromptCCannotResolve() {
         // (e) Prompt C returns confirmed:false (or can't) → the op keeps confirmed:false, exactly as today
         LlmProviderService llm = mock(LlmProviderService.class);
-        when(llm.complete(anyString()))
+        when(llm.complete(any(), anyString()))
                 .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Resolver alquiler\",\"confirmed\":false}]") // A
                 .thenReturn("{\"bucket\":\"backlog\",\"confirmed\":false}");                                                     // C can't resolve
         ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("tema del alquiler", List.of());
         assertThat(r.ops().get(0)).containsEntry("confirmed", false);
         assertThat(r.usedFallback()).isFalse();
-        verify(llm, times(2)).complete(anyString());
+        verify(llm, times(1)).complete(eq(LlmAction.TRIAGE), anyString());
+        verify(llm, times(1)).complete(eq(LlmAction.RESOLVER), anyString());
     }
 
     @Test
     void nonCreateOpsNeverCallPromptBOrC() {
         // (f) a done op resolves against open tasks and dispatches with a single A call — no B/C
         LlmProviderService llm = mock(LlmProviderService.class);
-        when(llm.complete(anyString()))
+        when(llm.complete(any(), anyString()))
                 .thenReturn("[{\"op\":\"done\",\"target_title\":\"Buy bread\"}]"); // A only
         ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("mark buy bread as done", OPEN_TASKS);
         assertThat(r.ops().get(0)).containsEntry("op", "done");
-        verify(llm, times(1)).complete(anyString());
+        // a done op is a single TRIAGE call — never enrichment/resolver
+        verify(llm, times(1)).complete(eq(LlmAction.TRIAGE), anyString());
+        verify(llm, never()).complete(eq(LlmAction.ENRICHMENT), anyString());
+        verify(llm, never()).complete(eq(LlmAction.RESOLVER), anyString());
     }
 
     private static final List<Map<String, Object>> OPEN_TASKS = List.of(
