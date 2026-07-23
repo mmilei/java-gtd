@@ -34,6 +34,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 _TRIAGE = os.path.join(HERE, "..", "src", "main", "resources", "prompts", "classifier-triage-custom.st")
 _LEGACY = os.path.join(HERE, "..", "src", "main", "resources", "prompts", "classifier_custom.st")
 TEMPLATE_PATH = _TRIAGE if os.path.exists(_TRIAGE) else _LEGACY
+
+# Prompt B (enrichment) and Prompt C (resolver), for --pipeline mode. B keeps the custom/sample
+# split; C is a single committed template.
+_PROMPTS = os.path.join(HERE, "..", "src", "main", "resources", "prompts")
+_ENRICH_CUSTOM = os.path.join(_PROMPTS, "classifier-enrich-custom.st")
+ENRICH_PATH = _ENRICH_CUSTOM if os.path.exists(_ENRICH_CUSTOM) else os.path.join(_PROMPTS, "classifier-enrich.st")
+RESOLVER_PATH = os.path.join(_PROMPTS, "classifier-resolver.st")
 USER_PROFILE_PATH = os.path.join(HERE, "..", "..", "..", "..", "_context", "user-profile.md")
 
 # --- fixtures (harness, no fieles 1:1 a la logica Java) ---
@@ -232,6 +239,83 @@ def run_one(engine, model, message, template, user_context):
     }
 
 
+def build_aux_prompt(template, message, title, body, bucket):
+    """Placeholder substitution for Prompt B/C — they share the same input shape."""
+    out = template
+    for placeholder, value in (
+        ("{message}", message),
+        ("{title}", title),
+        ("{body}", body or ""),
+        ("{bucket}", bucket or ""),
+        ("{known_projects}", KNOWN_PROJECTS),
+        ("{known_tags}", KNOWN_TAGS),
+        ("{valid_areas}", VALID_AREAS),
+    ):
+        out = out.replace(placeholder, value)
+    return out
+
+
+def call_target(target, prompt):
+    """Runs one (engine, model) call, returns (raw, latency)."""
+    engine, model = target
+    t0 = time.perf_counter()
+    raw = call_groq(model, prompt) if engine == "groq" else call_ollama(model, prompt)
+    return raw, time.perf_counter() - t0
+
+
+# clear, enrichable message (>5 words, real context for body) — should be confirmed:true → Prompt B
+CLEAR_MESSAGE = "comprar pilas nuevas para el mouse, las que tiene ahora ya no andan"
+
+
+def run_pipeline(a_target, bc_target):
+    """End-to-end A -> (B|C) against real engines, measuring the summed latency the user perceives.
+    A + B on the triage engine (a_target); C on the resolver engine (bc_target, generous/heavy)."""
+    tpl_a = open(TEMPLATE_PATH, encoding="utf-8").read()
+    tpl_b = open(ENRICH_PATH, encoding="utf-8").read()
+    tpl_c = open(RESOLVER_PATH, encoding="utf-8").read()
+    user_context = load_user_context()
+
+    print("=" * 78)
+    print("classifier-bench PIPELINE — %s" % date.today().isoformat())
+    print("A/B engine: %s/%s   |   C engine: %s/%s" % (a_target[0], a_target[1], bc_target[0], bc_target[1]))
+    print("=" * 78)
+
+    for message in (CLEAR_MESSAGE, AMBIGUOUS_MESSAGE):
+        print("\n" + "#" * 78)
+        print("# MESSAGE:", message)
+        print("#" * 78)
+
+        raw_a, lat_a = call_target(a_target, build_prompt(tpl_a, message, user_context))
+        ops, err = parse_ops(raw_a)
+        print("\n[A/Triage] %.2fs" % lat_a)
+        print("  raw:", raw_a.strip()[:400])
+        if err:
+            print("  PARSE ERROR:", err, "-> aborting this message")
+            continue
+        create = next((o for o in ops if isinstance(o, dict) and o.get("op") == "create"), None)
+        if create is None:
+            print("  no create op (ops=%s) -> nothing to enrich/resolve" % [o.get("op") for o in ops])
+            continue
+        confirmed = create.get("confirmed")
+        title, body, bucket = create.get("title", ""), create.get("body", ""), create.get("bucket", "")
+        print("  create: bucket=%s confirmed=%s title=%r" % (bucket, confirmed, title))
+
+        if confirmed is False:
+            stage, target, tpl = "C/Resolver", bc_target, tpl_c
+        else:
+            stage, target, tpl = "B/Enrich", a_target, tpl_b
+        raw_bc, lat_bc = call_target(target, build_aux_prompt(tpl, message, title, body, bucket))
+        obj, oerr = parse_ops(raw_bc)
+        print("\n[%s] %.2fs  (%s/%s)" % (stage, lat_bc, target[0], target[1]))
+        print("  raw:", raw_bc.strip()[:400])
+        if oerr:
+            print("  PARSE ERROR:", oerr, "(best-effort: op would be filed as-is)")
+        else:
+            merged = obj[0] if obj else {}
+            print("  parsed:", json.dumps(merged, ensure_ascii=False))
+        print("\n  >>> SUMMED LATENCY A->%s: %.2fs" % (stage[0], lat_a + lat_bc))
+
+
 def selftest():
     """Offline asserts sobre las funciones puras (parse/checks). Sin red."""
     assert strip_fences("```json\n[{\"a\":1}]\n```") == '[{"a":1}]'
@@ -254,6 +338,10 @@ def selftest():
     assert check_confirmed_ambiguous(AMBIGUOUS_MESSAGE, [{"op": "create", "confirmed": False}])[0] is True
     assert check_confirmed_ambiguous(AMBIGUOUS_MESSAGE, [{"op": "create", "confirmed": True}])[0] is False
     assert check_confirmed_ambiguous(AMBIGUOUS_MESSAGE, [{"op": "create"}])[0] is False  # ausente = no dudo
+    # build_aux_prompt: sustituye los 7 placeholders de B/C, body/bucket None -> ""
+    aux = build_aux_prompt("m={message} t={title} b={body} bk={bucket} a={valid_areas}",
+                           "msg", "Titulo", None, None)
+    assert aux == "m=msg t=Titulo b= bk= a=" + VALID_AREAS, aux
     print("selftest OK")
 
 
@@ -261,6 +349,19 @@ def main():
     args = [a for a in sys.argv[1:] if a.strip()]
     if args == ["--selftest"]:
         selftest()
+        return
+    if args and args[0] == "--pipeline":
+        # --pipeline [a_engine/model] [c_engine/model]; defaults: A/B on mistral-nemo, C on Groq
+        rest = args[1:]
+        def parse_target(s, default):
+            if not s:
+                return default
+            return ("groq", "llama-3.3-70b-versatile") if s == "groq" else ("ollama", s)
+        a_target = parse_target(rest[0] if len(rest) > 0 else None,
+                                ("ollama", "mistral-nemo:12b-instruct-2407-q4_K_M"))
+        bc_target = parse_target(rest[1] if len(rest) > 1 else None,
+                                 ("groq", "llama-3.3-70b-versatile"))
+        run_pipeline(a_target, bc_target)
         return
     if args:
         targets = [("groq", "llama-3.3-70b-versatile") if a == "groq" else ("ollama", a) for a in args]

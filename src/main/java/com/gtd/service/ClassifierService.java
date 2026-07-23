@@ -30,9 +30,15 @@ public class ClassifierService {
     private final VaultService vault;
     private final String promptTemplate;
     private final String fallbackTemplate;
+    private final String enrichTemplate;
+    private final String resolverTemplate;
     private final String userContext;
 
     private static final Set<String> NON_FILING_BUCKETS = Set.of("now", "discard");
+    // Fields Prompt A no longer emits — filled in afterwards, per create op, by Prompt B (enrichment,
+    // when confirmed) merging its object into the op. Prompt C (resolver) fills a narrower subset.
+    private static final Set<String> ENRICH_FIELDS =
+            Set.of("area", "tags", "project", "location", "estimate_minutes");
     // Cap on how many open tasks are sent to the LLM as context on each classify request. Runs
     // before serializeTasks()'s coarse 6000-char/80-item safety net — keyword pre-filtering keeps
     // the task the user is actually referring to in context instead of relying on list order.
@@ -50,6 +56,10 @@ public class ClassifierService {
             this.promptTemplate = new ClassPathResource(templateResourcePath(classifierTemplate, false))
                 .getContentAsString(StandardCharsets.UTF_8);
             this.fallbackTemplate = new ClassPathResource(templateResourcePath(classifierTemplate, true))
+                .getContentAsString(StandardCharsets.UTF_8);
+            this.enrichTemplate = new ClassPathResource(enrichTemplatePath(classifierTemplate))
+                .getContentAsString(StandardCharsets.UTF_8);
+            this.resolverTemplate = new ClassPathResource(RESOLVER_TEMPLATE_PATH)
                 .getContentAsString(StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -76,6 +86,19 @@ public class ClassifierService {
         }
         return custom ? "prompts/classifier-triage-custom.st" : "prompts/classifier-triage.st";
     }
+
+    /** Prompt B (enrichment) keeps the same sample/custom split as Triage — "custom" loads the
+     * gitignored voseo variant, everything else the committed English sample. */
+    static String enrichTemplatePath(String classifierTemplate) {
+        return "custom".equals(classifierTemplate)
+                ? "prompts/classifier-enrich-custom.st" : "prompts/classifier-enrich.st";
+    }
+
+    /** Prompt C (resolver) is a single committed template that does NOT consult the sample/custom
+     * switch (plan decision 4: Resolver is the rare ~13% path, no split). Because it's loaded
+     * unconditionally at construction, it must stay tracked — a gitignored variant would break a
+     * public checkout / CI, where the constructor would throw on a missing resource. */
+    static final String RESOLVER_TEMPLATE_PATH = "prompts/classifier-resolver.st";
 
     /**
      * Classifies the message with automatic retry:
@@ -119,7 +142,80 @@ public class ClassifierService {
         }
 
         resolveTargets(ops, openTasks);
+        enrichAndResolve(ops, message, knownProjects, knownTags, validAreas);
         return new ClassifyResult(ops, usedFallback);
+    }
+
+    /**
+     * Second stage of the pipeline: for each filed "create" op emitted by Prompt A, run exactly one
+     * of the two follow-up prompts — Prompt B (enrichment) when the op is confirmed, Prompt C
+     * (resolver) when it isn't. Non-create ops (done/update/move/edit/dismiss/patch) and non-filing
+     * create ops (now/discard) are left untouched: there is nothing to enrich or resolve on them.
+     * Both follow-ups are best-effort — a failure logs and leaves the op exactly as Prompt A left it.
+     */
+    private void enrichAndResolve(List<Map<String, Object>> ops, String message,
+                                  String knownProjects, String knownTags, String validAreas) {
+        for (Map<String, Object> op : ops) {
+            if (!"create".equals(op.get("op"))) continue;
+            String bucket = (String) op.get("bucket");
+            if (bucket == null || NON_FILING_BUCKETS.contains(bucket)) continue;
+            // Absent/true → confirmed (Prompt B enriches); only an explicit false routes to Prompt C.
+            boolean confirmed = !Boolean.FALSE.equals(op.get("confirmed"));
+            if (confirmed) {
+                enrichWithPromptB(op, message, knownProjects, knownTags, validAreas);
+            } else {
+                resolveWithPromptC(op, message, knownProjects, knownTags, validAreas);
+            }
+        }
+    }
+
+    /**
+     * Prompt B — enrichment. Fills {area, tags, project, location, estimate_minutes} on a confirmed
+     * create op. Best-effort and non-blocking: if the model's object doesn't parse, the task is
+     * written with whatever Prompt A already gave it — NO retry (decision from the plan; a missing
+     * tag or area is harmless, the task is already filed in the right bucket).
+     */
+    private void enrichWithPromptB(Map<String, Object> op, String message,
+                                   String knownProjects, String knownTags, String validAreas) {
+        String prompt = buildEnrichmentPrompt(enrichTemplate, message,
+                str(op.get("title")), str(op.get("body")), str(op.get("bucket")),
+                knownProjects, knownTags, validAreas);
+        try {
+            Map<String, Object> enriched = parseJsonObject(call(prompt));
+            for (String field : ENRICH_FIELDS) {
+                if (enriched.containsKey(field)) op.put(field, enriched.get(field));
+            }
+        } catch (Exception e) {
+            log.warn("Prompt B enrichment failed, filing task without enrichment: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Prompt C — resolver. Last chance to file an unconfirmed create correctly before it goes to the
+     * review queue. Given generous context, it re-decides {bucket, area, tags, confirmed}. If it
+     * resolves (confirmed:true) the op is upgraded and filed normally; if it can't (confirmed:false,
+     * omitted, or unparseable) the op keeps confirmed:false and enters /api/unconfirmed exactly as
+     * today — that semantics is intentionally untouched.
+     */
+    private void resolveWithPromptC(Map<String, Object> op, String message,
+                                    String knownProjects, String knownTags, String validAreas) {
+        String prompt = buildEnrichmentPrompt(resolverTemplate, message,
+                str(op.get("title")), str(op.get("body")), str(op.get("bucket")),
+                knownProjects, knownTags, validAreas);
+        try {
+            Map<String, Object> resolved = parseJsonObject(call(prompt));
+            if (resolved.get("bucket") != null) op.put("bucket", resolved.get("bucket"));
+            if (resolved.containsKey("area"))   op.put("area", resolved.get("area"));
+            if (resolved.containsKey("tags"))   op.put("tags", resolved.get("tags"));
+            // Only an explicit true upgrades the op — anything else leaves the confirmed:false intact.
+            if (Boolean.TRUE.equals(resolved.get("confirmed"))) op.put("confirmed", true);
+        } catch (Exception e) {
+            log.warn("Prompt C resolver failed, leaving task unconfirmed: {}", e.getMessage());
+        }
+    }
+
+    private static String str(Object o) {
+        return o == null ? "" : String.valueOf(o);
     }
 
     /**
@@ -223,6 +319,23 @@ public class ClassifierService {
             .replace("{message}", message);
     }
 
+    /**
+     * Placeholder substitution for Prompts B and C, which share the same input shape (original
+     * message + Prompt A's fixed title/body/bucket + the vault context lists). Pure, no IO — same
+     * testable convention as buildPrompt.
+     */
+    static String buildEnrichmentPrompt(String template, String message, String title, String body,
+                                        String bucket, String knownProjects, String knownTags, String validAreas) {
+        return template
+            .replace("{message}", message)
+            .replace("{title}", title)
+            .replace("{body}", body)
+            .replace("{bucket}", bucket)
+            .replace("{known_projects}", knownProjects)
+            .replace("{known_tags}", knownTags)
+            .replace("{valid_areas}", validAreas);
+    }
+
     /** Comma-separated list for the prompt, or a clear "none yet" marker when the vault has nothing yet — shared by known_projects and known_tags. */
     static String formatCsvOrNoneYet(List<String> values) {
         return values.isEmpty() ? "(none yet)" : String.join(", ", values);
@@ -308,6 +421,28 @@ public class ClassifierService {
             return objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
         } catch (Exception e) {
             throw new RuntimeException("LLM returned invalid JSON: " + raw, e);
+        }
+    }
+
+    /**
+     * Parses a single JSON object for Prompts B/C. Models occasionally wrap the one object in an
+     * array despite the "no array" instruction — unwrap the first element rather than reject it.
+     * Throws on anything else; callers treat any throw as "follow-up unavailable, leave op as-is".
+     */
+    private Map<String, Object> parseJsonObject(String raw) {
+        try {
+            String json = MarkdownSerializer.stripFences(raw).trim();
+            if (json.startsWith("[")) {
+                List<Map<String, Object>> list =
+                        objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
+                if (list.isEmpty()) throw new RuntimeException("empty array where an object was expected");
+                return list.get(0);
+            }
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("LLM returned invalid JSON object: " + raw, e);
         }
     }
 

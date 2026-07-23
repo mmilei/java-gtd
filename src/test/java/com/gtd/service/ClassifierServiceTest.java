@@ -25,27 +25,90 @@ class ClassifierServiceTest {
 
     @Test
     void malformedLevel1JsonTriggersFormatRetryAndFlagsFallback() {
-        // (d) the format retry (JSON didn't parse) still works: level-1 garbage → retry template → valid ops
+        // the format retry (JSON didn't parse) still works: level-1 garbage → retry template → valid ops.
+        // The recovered create is confirmed, so it now also triggers Prompt B — hence a 3rd complete().
         LlmProviderService llm = mock(LlmProviderService.class);
         when(llm.complete(anyString()))
                 .thenReturn("sorry, I cannot output JSON right now")   // level 1: unparseable
-                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"X\",\"confirmed\":true}]"); // retry: valid
+                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"X\",\"confirmed\":true}]") // retry: valid
+                .thenReturn("{\"area\":null,\"tags\":[]}");            // Prompt B enrichment
         ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("do the thing", List.of());
         assertThat(r.usedFallback()).isTrue();
         assertThat(r.ops()).hasSize(1);
         assertThat(r.ops().get(0)).containsEntry("op", "create");
+        verify(llm, times(3)).complete(anyString());
+    }
+
+    // ---- Split B/C pipeline (step 4) ----
+
+    @Test
+    void confirmedTrueCreateTriggersPromptBAndMergesEnrichment() {
+        // (a) a confirmed create fires exactly one Prompt B call; its fields land on the op
+        LlmProviderService llm = mock(LlmProviderService.class);
+        when(llm.complete(anyString()))
+                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Comprar pilas\",\"body\":\"para el mouse\",\"confirmed\":true}]") // A
+                .thenReturn("{\"area\":\"hogar\",\"tags\":[\"compras\"],\"project\":null,\"location\":\"super\",\"estimate_minutes\":15}");           // B
+        ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("comprar pilas para el mouse", List.of());
+        Map<String, Object> op = r.ops().get(0);
+        assertThat(op).containsEntry("area", "hogar");
+        assertThat(op).containsEntry("location", "super");
+        assertThat(op).containsEntry("estimate_minutes", 15);
+        assertThat(op.get("tags")).isEqualTo(List.of("compras"));
         verify(llm, times(2)).complete(anyString());
     }
 
     @Test
-    void confirmedFalseFromModelPropagatesPerOpWithoutRetry() {
-        // per-op confirmed from Prompt A flows through unchanged — no batch fallback involved
+    void promptBParseFailureFilesTaskUnenrichedWithoutRetry() {
+        // (b) Prompt B returns non-JSON → the task is filed with what Prompt A gave it, no retry
         LlmProviderService llm = mock(LlmProviderService.class);
         when(llm.complete(anyString()))
-                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Resolver alquiler\",\"confirmed\":false}]");
+                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Comprar pilas\",\"body\":\"para el mouse\",\"confirmed\":true}]") // A
+                .thenReturn("sorry, no json here");                                                                                                   // B unparseable
+        ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("comprar pilas para el mouse", List.of());
+        Map<String, Object> op = r.ops().get(0);
+        assertThat(op).doesNotContainKey("area");
+        assertThat(op).doesNotContainKey("location");
+        assertThat(op).doesNotContainKey("tags");
+        verify(llm, times(2)).complete(anyString()); // A + one B attempt, no third call
+    }
+
+    @Test
+    void confirmedFalseCreateTriggersPromptCWhichCanResolve() {
+        // (c)+(d) an unconfirmed create fires Prompt C; a resolving C upgrades confirmed and fills fields
+        LlmProviderService llm = mock(LlmProviderService.class);
+        when(llm.complete(anyString()))
+                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Resolver alquiler\",\"body\":\"no sabe\",\"confirmed\":false}]") // A
+                .thenReturn("{\"bucket\":\"backlog\",\"area\":\"finanzas\",\"tags\":[\"finanzas\"],\"confirmed\":true}");                              // C resolves
         ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("tema del alquiler", List.of());
+        Map<String, Object> op = r.ops().get(0);
+        assertThat(op).containsEntry("confirmed", true);
+        assertThat(op).containsEntry("area", "finanzas");
+        assertThat(op.get("tags")).isEqualTo(List.of("finanzas"));
         assertThat(r.usedFallback()).isFalse();
+        verify(llm, times(2)).complete(anyString());
+    }
+
+    @Test
+    void confirmedFalseCreateStaysUnconfirmedWhenPromptCCannotResolve() {
+        // (e) Prompt C returns confirmed:false (or can't) → the op keeps confirmed:false, exactly as today
+        LlmProviderService llm = mock(LlmProviderService.class);
+        when(llm.complete(anyString()))
+                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Resolver alquiler\",\"confirmed\":false}]") // A
+                .thenReturn("{\"bucket\":\"backlog\",\"confirmed\":false}");                                                     // C can't resolve
+        ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("tema del alquiler", List.of());
         assertThat(r.ops().get(0)).containsEntry("confirmed", false);
+        assertThat(r.usedFallback()).isFalse();
+        verify(llm, times(2)).complete(anyString());
+    }
+
+    @Test
+    void nonCreateOpsNeverCallPromptBOrC() {
+        // (f) a done op resolves against open tasks and dispatches with a single A call — no B/C
+        LlmProviderService llm = mock(LlmProviderService.class);
+        when(llm.complete(anyString()))
+                .thenReturn("[{\"op\":\"done\",\"target_title\":\"Buy bread\"}]"); // A only
+        ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("mark buy bread as done", OPEN_TASKS);
+        assertThat(r.ops().get(0)).containsEntry("op", "done");
         verify(llm, times(1)).complete(anyString());
     }
 
@@ -151,6 +214,32 @@ class ClassifierServiceTest {
                 .isEqualTo("prompts/classifier-triage.st");
         assertThat(ClassifierService.templateResourcePath(null, false))
                 .isEqualTo("prompts/classifier-triage.st");
+    }
+
+    @Test
+    void enrichTemplatePathFollowsSampleCustomSplitLikeTriage() {
+        assertThat(ClassifierService.enrichTemplatePath("custom"))
+                .isEqualTo("prompts/classifier-enrich-custom.st");
+        assertThat(ClassifierService.enrichTemplatePath("sample"))
+                .isEqualTo("prompts/classifier-enrich.st");
+        assertThat(ClassifierService.enrichTemplatePath("something-else"))
+                .isEqualTo("prompts/classifier-enrich.st");
+        // resolver never consults the switch — single committed template, same path always
+        assertThat(ClassifierService.RESOLVER_TEMPLATE_PATH)
+                .isEqualTo("prompts/classifier-resolver.st");
+    }
+
+    @Test
+    void buildEnrichmentPromptSubstitutesMessageTitleBodyBucketAndContext() {
+        String template = "msg={message} t={title} b={body} bk={bucket} p={known_projects} tg={known_tags} a={valid_areas}";
+        String result = ClassifierService.buildEnrichmentPrompt(
+                template, "comprar pilas", "Comprar pilas", "para el mouse", "backlog",
+                "java-gtd", "compras, hogar", "hogar, finanzas");
+        assertThat(result).isEqualTo(
+                "msg=comprar pilas t=Comprar pilas b=para el mouse bk=backlog p=java-gtd tg=compras, hogar a=hogar, finanzas");
+        assertThat(result).doesNotContain("{message}");
+        assertThat(result).doesNotContain("{title}");
+        assertThat(result).doesNotContain("{bucket}");
     }
 
     @Test
