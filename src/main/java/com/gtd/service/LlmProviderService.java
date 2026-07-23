@@ -3,9 +3,12 @@ package com.gtd.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.ollama.api.OllamaOptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -30,6 +33,13 @@ public class LlmProviderService {
     private static final Logger log = LoggerFactory.getLogger(LlmProviderService.class);
 
     public enum LlmProvider { GROQ, OLLAMA }
+
+    /**
+     * Keep the model resident in VRAM for 30s after each call so back-to-back pipeline
+     * calls (Triage → Enrich/Resolve) don't each pay a cold-load. Reused by the on-startup
+     * warmup below. Immutable/read-only, safe to share across calls.
+     */
+    static final OllamaOptions OLLAMA_OPTIONS = OllamaOptions.builder().keepAlive("30s").build();
 
     private final ChatClient groqChatClient;
     private final AtomicReference<LlmProvider> active = new AtomicReference<>(LlmProvider.GROQ);
@@ -57,12 +67,33 @@ public class LlmProviderService {
                     if (ollamaChatClient == null) {
                         throw new IllegalStateException("Ollama no configurado");
                     }
-                    yield ollamaChatClient.prompt().user(prompt).call().content();
+                    yield ollamaChatClient.prompt().user(prompt).options(OLLAMA_OPTIONS).call().content();
                 }
             };
         } catch (Exception e) {
             log.error("LLM completion failed (provider={}): {}", provider, e.getMessage());
             throw e;
+        }
+    }
+
+    /**
+     * Fire a trivial Ollama call on startup so the model is resident in VRAM before the
+     * user's first real capture (cold-load measured at ~42s). Best-effort: runs off the
+     * boot thread (never blocks startup) and swallows failures (Ollama not running, etc.).
+     * Only fires when the ollamaChatClient bean exists (ollama.enabled=true).
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmupOllama() {
+        if (ollamaChatClient == null) return;
+        new Thread(this::runWarmup, "ollama-warmup").start();
+    }
+
+    void runWarmup() {
+        try {
+            ollamaChatClient.prompt().user("ping").options(OLLAMA_OPTIONS).call().content();
+            log.info("Ollama warmup complete — model resident in VRAM");
+        } catch (Exception e) {
+            log.warn("Ollama warmup failed (best-effort, ignoring): {}", e.getMessage());
         }
     }
 
