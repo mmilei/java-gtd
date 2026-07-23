@@ -24,8 +24,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Owns which LLM provider is active (in-memory, resets to GROQ on restart) and
- * dispatches completions to it. No automatic fallback chain: if the selected
- * provider fails, the caller sees the error and picks another manually.
+ * dispatches completions to it. The user's manual choice stays authoritative while
+ * the provider responds: a GROQ runtime failure still propagates to the caller (no
+ * auto-switch in that direction — the 2026-07-01 "user picks manually" decision holds).
+ * The one exception is infrastructure death: if OLLAMA is selected but its healthcheck
+ * fails, that single call is dispatched to Groq without mutating {@code active}, so the
+ * preference is restored automatically the moment Ollama comes back.
  */
 @Service
 public class LlmProviderService {
@@ -60,6 +64,17 @@ public class LlmProviderService {
 
     public String complete(String prompt) {
         LlmProvider provider = active.get();
+        // Infra fallback: Ollama selected but down → send this one call to Groq without
+        // mutating `active`, so the preference is restored as soon as Ollama is back.
+        // If Groq is also down, dispatching to it below fails and the error propagates
+        // as always — there's nowhere else to fall.
+        // ponytail: per-call 800ms healthcheck, no cache. It hits local /api/tags in ~ms
+        // when up (the 800ms is only the down/hung ceiling), negligible vs multi-second
+        // inference. Add a short TTL cache only if profiling shows it matters.
+        if (provider == LlmProvider.OLLAMA && !ollamaAvailable()) {
+            log.warn("Ollama down, falling back to Groq for this call (preference unchanged)");
+            provider = LlmProvider.GROQ;
+        }
         try {
             return switch (provider) {
                 case GROQ -> groqChatClient.prompt().user(prompt).call().content();
@@ -82,6 +97,22 @@ public class LlmProviderService {
      * boot thread (never blocks startup) and swallows failures (Ollama not running, etc.).
      * Only fires when the ollamaChatClient bean exists (ollama.enabled=true).
      */
+    /**
+     * Surface a dead deployment at boot instead of at the first real request. If neither
+     * Groq (API key) nor Ollama (healthcheck) is available, every classification will throw
+     * IllegalStateException later — logging it here makes the misconfiguration visible in the
+     * startup logs. Non-blocking: the app still starts (a provider may be configured after boot).
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void checkProvidersOnStartup() {
+        boolean groq = groqAvailable();
+        boolean ollama = ollamaAvailable();
+        if (!groq && !ollama) {
+            log.error("No LLM provider available at startup (Groq API key missing, Ollama healthcheck down). "
+                + "App started anyway, but every classification will fail until a provider is configured.");
+        }
+    }
+
     @EventListener(ApplicationReadyEvent.class)
     public void warmupOllama() {
         if (ollamaChatClient == null) return;
@@ -135,7 +166,8 @@ public class LlmProviderService {
         return groqApiKey != null && !groqApiKey.isBlank();
     }
 
-    private boolean ollamaAvailable() {
+    // package-private so unit tests can stub the healthcheck without a live Ollama.
+    boolean ollamaAvailable() {
         if (ollamaChatClient == null) return false;
         try {
             HttpClient client = HttpClient.newBuilder()

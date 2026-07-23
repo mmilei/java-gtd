@@ -1,5 +1,8 @@
 package com.gtd.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
@@ -9,9 +12,13 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -99,5 +106,82 @@ class LlmProviderServiceTest {
         service.ollamaChatClient = ollama;
 
         assertThatCode(service::runWarmup).doesNotThrowAnyException();
+    }
+
+    // --- Auto-switch Ollama → Groq (infra fallback) ---
+
+    @Test
+    void ollamaSelectedButDownFallsBackToGroqWithoutMutatingActive() {
+        LlmProviderService service = spy(newService());
+        ChatClient ollama = mock(ChatClient.class);
+        service.ollamaChatClient = ollama;
+        service.select("OLLAMA");
+        doReturn(false).when(service).ollamaAvailable(); // Ollama down
+        stubContent(groqChatClient, "groq-result");
+
+        String out = service.complete("clasificá esto");
+
+        assertThat(out).isEqualTo("groq-result");
+        verify(ollama, never()).prompt();                                  // Ollama never dispatched
+        assertThat(service.describeAll().get("active")).isEqualTo("OLLAMA"); // preference preserved
+    }
+
+    @Test
+    void ollamaAndGroqBothDownPropagatesOriginalError() {
+        LlmProviderService service = spy(newService());
+        service.ollamaChatClient = mock(ChatClient.class);
+        service.select("OLLAMA");
+        doReturn(false).when(service).ollamaAvailable(); // Ollama down
+        when(groqChatClient.prompt()).thenThrow(new RuntimeException("groq 503")); // Groq down too
+
+        assertThatThrownBy(() -> service.complete("clasificá esto"))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessage("groq 503"); // clean propagation, not a confusing wrapped error
+    }
+
+    @Test
+    void ollamaSelectedAndUpDispatchesToOllama() {
+        LlmProviderService service = spy(newService());
+        ChatClient ollama = mock(ChatClient.class);
+        service.ollamaChatClient = ollama;
+        service.select("OLLAMA");
+        doReturn(true).when(service).ollamaAvailable(); // Ollama up
+        stubContent(ollama, "ollama-result");
+
+        String out = service.complete("clasificá esto");
+
+        assertThat(out).isEqualTo("ollama-result");
+        verify(groqChatClient, never()).prompt(); // no fallback, Groq untouched
+    }
+
+    // --- Startup provider-availability check ---
+
+    @Test
+    void startupCheckLogsErrorWhenNoProviderAvailableWithoutThrowing() {
+        // groqApiKey blank + ollamaChatClient null → both unavailable. Must log ERROR and
+        // NOT throw (the Spring context keeps starting; the app boots regardless).
+        LlmProviderService service = newService();
+
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(LlmProviderService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        assertThatCode(service::checkProvidersOnStartup).doesNotThrowAnyException();
+
+        logger.detachAppender(appender);
+        assertThat(appender.list).anyMatch(e ->
+            e.getLevel() == Level.ERROR && e.getFormattedMessage().contains("No LLM provider available"));
+    }
+
+    private void stubContent(ChatClient client, String content) {
+        ChatClient.ChatClientRequestSpec spec = mock(ChatClient.ChatClientRequestSpec.class);
+        ChatClient.CallResponseSpec resp = mock(ChatClient.CallResponseSpec.class);
+        when(client.prompt()).thenReturn(spec);
+        when(spec.user(anyString())).thenReturn(spec);
+        when(spec.options(any())).thenReturn(spec);
+        when(spec.call()).thenReturn(resp);
+        when(resp.content()).thenReturn(content);
     }
 }
