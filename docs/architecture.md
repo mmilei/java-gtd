@@ -71,7 +71,7 @@ All five are gated together by a single boolean, `gtd.vault.migrations-enabled` 
 | `migrateTodaySince()` | Backfills a missing `today_since` on `today` notes from their `created` date. |
 | `migrateTimestamps()` | Rewrites full ISO datetime values left in frontmatter (`...T...`) to plain dates. |
 | `migrateBucketMismatch()` | Relocates a note whose `bucket` field disagrees with the directory it sits in, and quarantines filename duplicates across bucket dirs (loser marked dismissed, moved to `brain/.archive/duplicates/` — never deleted). |
-| `migrateDelegadoToList()` | Rewrites a legacy scalar `delegado_a: Juan` as a single-element list `["Juan"]`. |
+| `migrateRelatedPeopleToList()` | Rewrites a legacy scalar `related_people: Juan` as a single-element list `["Juan"]`. |
 
 They are invoked in that order in the constructor — folder-split first (it moves files into the right directories) so that bucket-mismatch afterwards sees each note already in its bucket folder.
 

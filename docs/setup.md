@@ -29,7 +29,7 @@ All settings live in `application.properties` and can be overridden per-machine 
 | `classifier.template` | `sample` | Prompt pair: `sample` (public, English) or `custom` (gitignored, personal) |
 | `ollama.enabled` | off | Set `true` to register the local Ollama provider |
 | `spring.ai.ollama.base-url` | `http://localhost:11434` | Ollama server |
-| `gtd.vault.migrate-*` | `true` | Startup self-healing migrations on the vault (today_since, timestamps, bucket mismatches, delegado list, one-time folder-per-bucket split) |
+| `gtd.vault.migrations-enabled` | `true` | Startup self-healing migrations on the vault (today_since, timestamps, bucket mismatches, related_people list, one-time folder-per-bucket split) |
 
 Example `application-local.properties`:
 

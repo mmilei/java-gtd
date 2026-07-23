@@ -46,7 +46,7 @@ public class VaultService {
     private final ReentrantLock lock = new ReentrantLock();
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "delegado_a", "tags", "message", "op", "project", "location", "area");
+    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "related_people", "tags", "message", "op", "project", "location", "area");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
     private static final List<String> ALL_BUCKETS = List.of("today", "backlog", "waiting", "someday", "reference");
     // Closed vocabulary for the `area` life-area field — the first LLM-controlled value in this
@@ -89,7 +89,7 @@ public class VaultService {
             migrateTodaySince();
             migrateTimestamps();
             migrateBucketMismatch();
-            migrateDelegadoToList();
+            migrateRelatedPeopleToList();
         }
     }
 
@@ -125,8 +125,8 @@ public class VaultService {
         // area is validated against a closed vocabulary — an out-of-vocab value is dropped silently.
         String area = normalizeArea(item.get("area"));
         if (area != null) frontmatter.put("area", area);
-        List<String> delegados = delegadoAsList(item.get("delegado_a"));
-        if (!delegados.isEmpty()) frontmatter.put("delegado_a", delegados);
+        List<String> relatedPeople = relatedPeopleAsList(item.get("related_people"));
+        if (!relatedPeople.isEmpty()) frontmatter.put("related_people", relatedPeople);
         List<String> tags = tagsFrom(item);
         normalizeTypeTags(tags, bucket);
         frontmatter.put("tags", tags);
@@ -310,7 +310,7 @@ public class VaultService {
     }
 
     public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "delegado_a", "area", "estimate_minutes", "confirmed", "project", "location", "priority");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "related_people", "area", "estimate_minutes", "confirmed", "project", "location", "priority");
         mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             if ("area".equals(k)) {
@@ -318,7 +318,7 @@ public class VaultService {
                 if (area != null) item.put("area", area);
                 return;
             }
-            item.put(k, "delegado_a".equals(k) ? delegadoAsList(v) : v);
+            item.put(k, "related_people".equals(k) ? relatedPeopleAsList(v) : v);
         }));
     }
 
@@ -562,14 +562,14 @@ public class VaultService {
         return created != null ? String.valueOf(created) : LocalDate.now().toString();
     }
 
-    /** Rewrites legacy scalar delegado_a ("Juan") as a single-element list (["Juan"]) on disk. */
-    private void migrateDelegadoToList() {
-        forEachMarkdownFile(allDirs, "migrateDelegadoToList", (dir, p) -> {
+    /** Rewrites legacy scalar related_people ("Juan") as a single-element list (["Juan"]) on disk. */
+    private void migrateRelatedPeopleToList() {
+        forEachMarkdownFile(allDirs, "migrateRelatedPeopleToList", (dir, p) -> {
             String content = Files.readString(p);
             Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
-            if (item.get("delegado_a") instanceof String) {
+            if (item.get("related_people") instanceof String) {
                 String body = (String) item.remove("body");
-                item.put("delegado_a", delegadoAsList(item.get("delegado_a")));
+                item.put("related_people", relatedPeopleAsList(item.get("related_people")));
                 Files.writeString(p, MarkdownSerializer.serialize(item, body));
             }
         });
@@ -811,11 +811,11 @@ public class VaultService {
     }
 
     /**
-     * Normalizes delegado_a ("related people") to a List<String> regardless of whether the
-     * caller sent a list (frontend, new format) or a bare string (legacy data, old classifier
-     * output) — never both shapes coexist past this point.
+     * Normalizes related_people to a List<String> regardless of whether the caller sent a list
+     * (frontend, new format) or a bare string (legacy data, old classifier output) — never both
+     * shapes coexist past this point.
      */
-    private static List<String> delegadoAsList(Object raw) {
+    private static List<String> relatedPeopleAsList(Object raw) {
         if (raw instanceof List<?> list) {
             return list.stream().filter(Objects::nonNull).map(String::valueOf).map(String::strip)
                 .filter(s -> !s.isBlank()).distinct().toList();

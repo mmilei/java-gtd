@@ -779,39 +779,39 @@ class VaultServiceTest {
     }
 
     @Test
-    void shouldNormalizeDelegadoAToListOnWriteAndPatch(@TempDir Path tempDir) throws Exception {
+    void shouldNormalizeRelatedPeopleToListOnWriteAndPatch(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
 
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "waiting");
         op.put("title", "Ask Juan");
-        op.put("delegado_a", "Juan");
+        op.put("related_people", "Juan");
         String filename = vault.write(op, Actor.USER);
 
         @SuppressWarnings("unchecked")
-        List<String> delegados = (List<String>) vault.read(filename).get("delegado_a");
-        assertThat(delegados).containsExactly("Juan");
+        List<String> relatedPeople = (List<String>) vault.read(filename).get("related_people");
+        assertThat(relatedPeople).containsExactly("Juan");
 
-        vault.patchMeta(filename, Map.of("delegado_a", List.of("Juan", "Maria")), Actor.USER);
+        vault.patchMeta(filename, Map.of("related_people", List.of("Juan", "Maria")), Actor.USER);
 
         @SuppressWarnings("unchecked")
-        List<String> updated = (List<String>) vault.read(filename).get("delegado_a");
+        List<String> updated = (List<String>) vault.read(filename).get("related_people");
         assertThat(updated).containsExactly("Juan", "Maria");
     }
 
     @Test
-    void shouldDropNullEntriesFromDelegadoAList(@TempDir Path tempDir) throws Exception {
+    void shouldDropNullEntriesFromRelatedPeopleList(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
 
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "waiting");
         op.put("title", "Ask someone");
-        op.put("delegado_a", java.util.Arrays.asList("Juan", null, "  "));
+        op.put("related_people", java.util.Arrays.asList("Juan", null, "  "));
         String filename = vault.write(op, Actor.USER);
 
         @SuppressWarnings("unchecked")
-        List<String> delegados = (List<String>) vault.read(filename).get("delegado_a");
-        assertThat(delegados).containsExactly("Juan");
+        List<String> relatedPeople = (List<String>) vault.read(filename).get("related_people");
+        assertThat(relatedPeople).containsExactly("Juan");
     }
 
     @Test
@@ -833,19 +833,19 @@ class VaultServiceTest {
     }
 
     @Test
-    void shouldMigrateLegacyScalarDelegadoAToList(@TempDir Path tempDir) throws Exception {
+    void shouldMigrateLegacyScalarRelatedPeopleToList(@TempDir Path tempDir) throws Exception {
         Path backlog = tempDir.resolve("brain/backlog");
         Files.createDirectories(backlog);
 
-        String filename = "20260701-000000-legacy-delegado.md";
+        String filename = "20260701-000000-legacy-related-people.md";
         Files.writeString(backlog.resolve(filename), """
             ---
             type: action
-            title: Legacy delegado
+            title: Legacy related people
             bucket: waiting
             status: open
             created: 2026-07-01
-            delegado_a: Juan
+            related_people: Juan
             tags: [gtd, action]
             ---
 
@@ -854,8 +854,8 @@ class VaultServiceTest {
         VaultService vault = newVault(tempDir);
 
         @SuppressWarnings("unchecked")
-        List<String> delegados = (List<String>) vault.read(filename).get("delegado_a");
-        assertThat(delegados).containsExactly("Juan");
+        List<String> relatedPeople = (List<String>) vault.read(filename).get("related_people");
+        assertThat(relatedPeople).containsExactly("Juan");
     }
 
     @Test
