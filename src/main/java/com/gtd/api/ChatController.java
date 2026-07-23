@@ -58,7 +58,7 @@ public class ChatController {
         List<Map<String, Object>> discardedOps = new ArrayList<>();
 
         for (Map<String, Object> op : ops) {
-            Map<String, Object> dispatched = dispatch(op, result.usedFallback(), message);
+            Map<String, Object> dispatched = dispatch(op, message);
             results.add(dispatched);
 
             String bucket = (String) op.get("bucket");
@@ -164,11 +164,11 @@ public class ChatController {
         }
     }
 
-    private Map<String, Object> dispatch(Map<String, Object> op, boolean usedFallback, String captureSource) {
+    private Map<String, Object> dispatch(Map<String, Object> op, String captureSource) {
         String opType = (String) op.get("op");
         try {
             return switch (opType) {
-                case "create" -> handleCreate(op, usedFallback, captureSource);
+                case "create" -> handleCreate(op, captureSource);
                 case "done"   -> handleDone(op);
                 case "update" -> handleUpdate(op);
                 case "move"   -> handleMove(op);
@@ -183,7 +183,7 @@ public class ChatController {
         }
     }
 
-    private Map<String, Object> handleCreate(Map<String, Object> op, boolean usedFallback, String captureSource) {
+    private Map<String, Object> handleCreate(Map<String, Object> op, String captureSource) {
         String bucket = (String) op.get("bucket");
         String title  = op.get("title") != null ? (String) op.get("title") : "";
         if ("now".equals(bucket) || "discard".equals(bucket)) {
@@ -195,19 +195,26 @@ public class ChatController {
                 "message", op.getOrDefault("message", "No archivado.")
             );
         }
+        // confirmed is now a per-op signal the Triage prompt (Prompt A) emits — the model marks a
+        // create false when it hesitates between buckets or the message is genuinely ambiguous.
+        // This replaces the old batch-wide usedFallback proxy (which only ever fired on malformed
+        // JSON, never on real ambiguity). Absent or true → confirmed; only an explicit false
+        // queues the task for review.
+        boolean confirmed = !Boolean.FALSE.equals(op.get("confirmed"));
         // Copy rather than mutate op in place: it may be an immutable Map (Jackson-deserialized
         // ops are mutable, but callers/tests aren't guaranteed to hand us one).
         Map<String, Object> toWrite = new java.util.LinkedHashMap<>(op);
+        // Normalize: only ever persist confirmed:false. A confirmed:true (or absent) task carries
+        // no confirmed frontmatter key — VaultService treats absent/true identically as "confirmed",
+        // and this keeps a normal task's note clean.
+        toWrite.remove("confirmed");
         // capture_source preserves the exact user string that produced this task — the transcript
         // has it too, but only globally; this links task↔string on the note itself. It's not a
         // CLASSIFIER_KEY, so VaultService.write() persists it via the generic passthrough.
         if (captureSource != null && !captureSource.isBlank()) {
             toWrite.put("capture_source", captureSource);
         }
-        // usedFallback is a proxy for low classifier confidence, not LLM self-assessment (which
-        // tends to always claim certainty) — confirmed:false queues the task for later review
-        // instead of blocking or silently trusting a shaky classification.
-        if (usedFallback) {
+        if (!confirmed) {
             toWrite.put("confirmed", false);
         }
         String filename = vault.write(toWrite, Actor.LLM);
@@ -217,7 +224,7 @@ public class ChatController {
             "bucket", bucket,
             "file", filename,
             "title", title,
-            "confirmed", !usedFallback
+            "confirmed", confirmed
         );
     }
 

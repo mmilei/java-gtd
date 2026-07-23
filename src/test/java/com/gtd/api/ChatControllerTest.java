@@ -112,21 +112,63 @@ class ChatControllerTest {
     }
 
     @Test
-    void chatWithFallback() throws Exception {
+    void chatCreateConfirmedFalseQueuesForReview() throws Exception {
+        // (b) a per-op confirmed:false from Prompt A writes the task with confirmed:false, dropping it
+        // into the /api/unconfirmed review queue — the real ambiguity signal, independent of any retry.
         List<Map<String, Object>> ops = List.of(
                 Map.of("op", "create", "bucket", "someday", "title", "Learn piano",
-                        "body", "", "due", "", "related_people", "", "tags", List.of())
+                        "body", "", "due", "", "related_people", "", "tags", List.of(),
+                        "confirmed", false)
         );
-        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, true));
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
         when(vault.write(any(), any())).thenReturn("20260625-120000-learn-piano.md");
 
         mvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"message\":\"someday learn piano\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.fallback").value(true))
                 .andExpect(jsonPath("$.ops[0].confirmed").value(false));
         verify(vault).write(argThat(m -> Boolean.FALSE.equals(m.get("confirmed"))), eq(Actor.LLM));
+    }
+
+    @Test
+    void batchFallbackFlagNoLongerForcesConfirmedFalse() throws Exception {
+        // The format-retry flag (usedFallback) still surfaces as $.fallback, but it is now decoupled
+        // from confidence: a confident create (confirmed absent/true) stays confirmed:true even when a
+        // JSON retry happened. This is the whole point of the redesign — retry ≠ semantic ambiguity.
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "create", "bucket", "backlog", "title", "Buy milk",
+                        "body", "", "due", "", "related_people", "", "tags", List.of())
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, true));
+        when(vault.write(any(), any())).thenReturn("20260625-120000-buy-milk.md");
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"buy milk\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fallback").value(true))
+                .andExpect(jsonPath("$.ops[0].confirmed").value(true));
+        verify(vault).write(argThat(m -> !m.containsKey("confirmed")), eq(Actor.LLM));
+    }
+
+    @Test
+    void chatCreateDiscardBucketNotFiledAndCarriesNoConfirmed() throws Exception {
+        // (c) gibberish → discard: not filed, and confirmed never applies to a discard op
+        List<Map<String, Object>> ops = List.of(
+                Map.of("op", "create", "bucket", "discard", "title", "asdkj qwerty",
+                        "message", "No parece un mensaje real — lo descarto.")
+        );
+        when(classifier.classifyAll(any(), any())).thenReturn(new ClassifyResult(ops, false));
+
+        mvc.perform(post("/api/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"asdkj qwerty asdasd\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ops[0].filed").value(false))
+                .andExpect(jsonPath("$.ops[0].bucket").value("discard"))
+                .andExpect(jsonPath("$.ops[0].confirmed").doesNotExist());
+        verify(vault, never()).write(any(), any());
     }
 
     @Test

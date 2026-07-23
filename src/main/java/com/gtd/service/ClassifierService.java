@@ -61,18 +61,20 @@ public class ClassifierService {
 
     /**
      * Pure resource-path resolution, no IO — directly unit-testable. "custom" loads the
-     * gitignored, Argentinized personal templates (classifier_custom.st /
-     * classifier-fallback-custom.st); any other value — including the "sample" default and
+     * gitignored, Argentinized personal Triage templates (classifier-triage-custom.st /
+     * classifier-triage-fallback-custom.st); any other value — including the "sample" default and
      * unrecognized input — falls back to the committed English sample templates, since those
      * are the only ones guaranteed to exist in a public checkout (the custom files are
-     * local-only and absent from CI / anyone else's clone).
+     * local-only and absent from CI / anyone else's clone). fallback=true selects the
+     * format-retry template (JSON didn't parse), not a semantic-confidence fallback — the
+     * confidence signal now lives per-op as the "confirmed" field emitted by these prompts.
      */
     static String templateResourcePath(String classifierTemplate, boolean fallback) {
         boolean custom = "custom".equals(classifierTemplate);
         if (fallback) {
-            return custom ? "prompts/classifier-fallback-custom.st" : "prompts/classifier-fallback.st";
+            return custom ? "prompts/classifier-triage-fallback-custom.st" : "prompts/classifier-triage-fallback.st";
         }
-        return custom ? "prompts/classifier_custom.st" : "prompts/classifier.st";
+        return custom ? "prompts/classifier-triage-custom.st" : "prompts/classifier-triage.st";
     }
 
     /**

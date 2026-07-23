@@ -1,5 +1,6 @@
 package com.gtd.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -7,8 +8,46 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
 class ClassifierServiceTest {
+
+    /** Builds a ClassifierService with a stubbed LLM and a minimal vault stub — reads the real
+     * classpath Triage templates ("sample" mode), so classifyAll's retry orchestration runs end to end. */
+    private static ClassifierService serviceWith(LlmProviderService llm) {
+        VaultService vault = mock(VaultService.class);
+        when(vault.readContextFile(anyString())).thenReturn("");
+        when(vault.knownProjects()).thenReturn(List.of());
+        when(vault.knownTags()).thenReturn(List.of());
+        when(vault.validAreas()).thenReturn(List.of("finanzas", "hogar"));
+        return new ClassifierService(llm, new ObjectMapper(), vault, "sample");
+    }
+
+    @Test
+    void malformedLevel1JsonTriggersFormatRetryAndFlagsFallback() {
+        // (d) the format retry (JSON didn't parse) still works: level-1 garbage → retry template → valid ops
+        LlmProviderService llm = mock(LlmProviderService.class);
+        when(llm.complete(anyString()))
+                .thenReturn("sorry, I cannot output JSON right now")   // level 1: unparseable
+                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"X\",\"confirmed\":true}]"); // retry: valid
+        ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("do the thing", List.of());
+        assertThat(r.usedFallback()).isTrue();
+        assertThat(r.ops()).hasSize(1);
+        assertThat(r.ops().get(0)).containsEntry("op", "create");
+        verify(llm, times(2)).complete(anyString());
+    }
+
+    @Test
+    void confirmedFalseFromModelPropagatesPerOpWithoutRetry() {
+        // per-op confirmed from Prompt A flows through unchanged — no batch fallback involved
+        LlmProviderService llm = mock(LlmProviderService.class);
+        when(llm.complete(anyString()))
+                .thenReturn("[{\"op\":\"create\",\"bucket\":\"backlog\",\"title\":\"Resolver alquiler\",\"confirmed\":false}]");
+        ClassifierService.ClassifyResult r = serviceWith(llm).classifyAll("tema del alquiler", List.of());
+        assertThat(r.usedFallback()).isFalse();
+        assertThat(r.ops().get(0)).containsEntry("confirmed", false);
+        verify(llm, times(1)).complete(anyString());
+    }
 
     private static final List<Map<String, Object>> OPEN_TASKS = List.of(
             Map.of("file", "20260601-1-buy-bread.md", "title", "Buy bread", "bucket", "backlog"),
@@ -94,24 +133,24 @@ class ClassifierServiceTest {
     @Test
     void templateResourcePathUsesCustomWhenModeIsCustom() {
         assertThat(ClassifierService.templateResourcePath("custom", false))
-                .isEqualTo("prompts/classifier_custom.st");
+                .isEqualTo("prompts/classifier-triage-custom.st");
         assertThat(ClassifierService.templateResourcePath("custom", true))
-                .isEqualTo("prompts/classifier-fallback-custom.st");
+                .isEqualTo("prompts/classifier-triage-fallback-custom.st");
     }
 
     @Test
     void templateResourcePathDefaultsToSampleForSampleModeOrUnknownValue() {
         assertThat(ClassifierService.templateResourcePath("sample", false))
-                .isEqualTo("prompts/classifier.st");
+                .isEqualTo("prompts/classifier-triage.st");
         assertThat(ClassifierService.templateResourcePath("sample", true))
-                .isEqualTo("prompts/classifier-fallback.st");
+                .isEqualTo("prompts/classifier-triage-fallback.st");
 
         // unrecognized/null values must never silently fall through to the gitignored
         // custom templates, which don't exist in CI or a public clone
         assertThat(ClassifierService.templateResourcePath("something-else", false))
-                .isEqualTo("prompts/classifier.st");
+                .isEqualTo("prompts/classifier-triage.st");
         assertThat(ClassifierService.templateResourcePath(null, false))
-                .isEqualTo("prompts/classifier.st");
+                .isEqualTo("prompts/classifier-triage.st");
     }
 
     @Test
