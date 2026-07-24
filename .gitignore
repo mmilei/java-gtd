@@ -11,8 +11,6 @@ logs/
 *.env
 .env.local
 application-local.properties
-src/main/resources/prompts/classifier_custom.st
-src/main/resources/prompts/classifier-fallback-custom.st
 src/main/resources/prompts/classifier-triage-custom.st
 src/main/resources/prompts/classifier-triage-fallback-custom.st
 src/main/resources/prompts/classifier-enrich-custom.st
