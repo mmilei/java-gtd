@@ -35,6 +35,8 @@ public class ProviderController {
         if (!providers.select(action, id)) {
             return ResponseEntity.badRequest().body(Map.of("error", "provider not available: " + id));
         }
-        return ResponseEntity.ok(Map.of("action", action.name(), "active", id.trim().toUpperCase()));
+        // select() already validated id — echo the enum's canonical name, not a re-massaged raw string.
+        String active = LlmProviderService.LlmProvider.valueOf(id.trim().toUpperCase()).name();
+        return ResponseEntity.ok(Map.of("action", action.name(), "active", active));
     }
 }
