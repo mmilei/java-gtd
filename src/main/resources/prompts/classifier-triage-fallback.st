@@ -18,6 +18,8 @@ For "move":   {"op":"move","target_title":"exact title from open tasks","new_buc
 For "update": {"op":"update","target_title":"exact title from open tasks","append":"text to add"}
 For "edit":   {"op":"edit","target_title":"exact title from open tasks","new_body":"full replacement body"}
 For "dismiss": {"op":"dismiss","target_title":"exact title from open tasks"}
+For "patch":  {"op":"patch","target_title":"exact title from open tasks","tags":[...],"due":null,"today_since":null,"project":null,"location":null,"area":null}
+  patch reference (reuse existing values, do NOT invent near-duplicates): known tags {known_tags}; known projects {known_projects}; area MUST be one of {valid_areas} or null
 
 Examples:
 - "buy 8mm screws" → [{"op":"create","bucket":"backlog","title":"Buy 8mm screws","body":"","due":null,"related_people":null,"confirmed":true}]

@@ -54,6 +54,10 @@ Is it a concrete action someone can do?
    Fields: op, target_title, tags (full array of context tags — assign every context that applies, not just one), due (YYYY-MM-DD or null), today_since (YYYY-MM-DD or null), project (string or null — the specific codebase, only when the message clearly names one), location (string or null — the physical place implied), area (string or null — one of the user's configured life areas)
    Use when the user changes metadata: "add the urgent tag", "set date for tomorrow", "remove the health tag"
    Distinction: "move" changes the bucket, "patch" changes only the metadata
+   Reference vocabulary for patch (reuse these existing values — do NOT invent near-duplicate tags, and never emit an out-of-list area):
+     known tags: {known_tags}
+     known projects: {known_projects}
+     valid areas (area MUST be one of these, or null): {valid_areas}
 
 ## Critical rules
 - DEFAULT: backlog — but ONLY for messages with real semantic content. Only use "today" if the user states it explicitly (see decision tree above).
