@@ -99,12 +99,6 @@ public class LlmProviderService {
     }
 
     /**
-     * Fire a trivial Ollama call on startup so the model is resident in VRAM before the
-     * user's first real capture (cold-load measured at ~42s). Best-effort: runs off the
-     * boot thread (never blocks startup) and swallows failures (Ollama not running, etc.).
-     * Only fires when the ollamaChatClient bean exists (ollama.enabled=true).
-     */
-    /**
      * Surface a dead deployment at boot instead of at the first real request. If neither
      * Groq (API key) nor Ollama (healthcheck) is available, every classification will throw
      * IllegalStateException later — logging it here makes the misconfiguration visible in the
@@ -120,10 +114,21 @@ public class LlmProviderService {
         }
     }
 
+    /**
+     * Fire a trivial Ollama call on startup so the model is resident in VRAM before the
+     * user's first real capture (cold-load measured at ~42s). Best-effort: runs off the
+     * boot thread (never blocks startup) and swallows failures (Ollama not running, etc.).
+     * Only fires when the ollamaChatClient bean exists (ollama.enabled=true) AND the 800ms
+     * healthcheck passes — a down/hung Ollama is skipped here instead of firing a warmup that
+     * blocks forever. The thread is a daemon so a warmup that still hangs (Ollama answering
+     * /api/tags but stuck mid-inference) can never block a clean JVM shutdown.
+     */
     @EventListener(ApplicationReadyEvent.class)
     public void warmupOllama() {
-        if (ollamaChatClient == null) return;
-        new Thread(this::runWarmup, "ollama-warmup").start();
+        if (ollamaChatClient == null || !ollamaAvailable()) return;
+        Thread thread = new Thread(this::runWarmup, "ollama-warmup");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     void runWarmup() {
