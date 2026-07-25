@@ -135,7 +135,7 @@ class LlmProviderServiceTest {
         doReturn(false).when(service).ollamaAvailable(); // Ollama down
         stubContent(groqChatClient, "groq-result");
 
-        String out = service.complete(LlmAction.TRIAGE, "clasificá esto");
+        String out = service.complete(LlmAction.TRIAGE, "classify this");
 
         assertThat(out).isEqualTo("groq-result");
         verify(ollama, never()).prompt();                              // Ollama never dispatched
@@ -169,7 +169,7 @@ class LlmProviderServiceTest {
         doReturn(false).when(service).ollamaAvailable(); // Ollama down
         when(groqChatClient.prompt()).thenThrow(new RuntimeException("groq 503")); // Groq down too
 
-        assertThatThrownBy(() -> service.complete(LlmAction.TRIAGE, "clasificá esto"))
+        assertThatThrownBy(() -> service.complete(LlmAction.TRIAGE, "classify this"))
             .isInstanceOf(RuntimeException.class)
             .hasMessage("groq 503"); // clean propagation, not a confusing wrapped error
     }
@@ -183,7 +183,7 @@ class LlmProviderServiceTest {
         doReturn(true).when(service).ollamaAvailable(); // Ollama up
         stubContent(ollama, "ollama-result");
 
-        String out = service.complete(LlmAction.TRIAGE, "clasificá esto");
+        String out = service.complete(LlmAction.TRIAGE, "classify this");
 
         assertThat(out).isEqualTo("ollama-result");
         verify(groqChatClient, never()).prompt(); // no fallback, Groq untouched

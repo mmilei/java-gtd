@@ -87,7 +87,7 @@ public class LlmProviderService {
                 case GROQ -> groqChatClient.prompt().user(prompt).call().content();
                 case OLLAMA -> {
                     if (ollamaChatClient == null) {
-                        throw new IllegalStateException("Ollama no configurado");
+                        throw new IllegalStateException("Ollama not configured");
                     }
                     yield ollamaChatClient.prompt().user(prompt).options(OLLAMA_OPTIONS).call().content();
                 }
