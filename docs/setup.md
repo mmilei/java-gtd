@@ -41,25 +41,28 @@ ollama.enabled=true
 
 ## Prompt templates
 
-The classifier loads a two-level prompt pair from `src/main/resources/prompts/`:
+The classifier loads three prompt templates from `src/main/resources/prompts/`, one per pipeline stage:
 
-- `classifier.st` + `classifier-fallback.st` — public English samples, used with `classifier.template=sample` (default).
-- `classifier_custom.st` + `classifier-fallback-custom.st` — gitignored personal versions, used with `classifier.template=custom`.
+- **Triage** (`classifier-triage.st` + `classifier-triage-fallback.st`) — the two-level entry prompt; level 2 (fallback) runs only when level 1 output fails to parse or classifies everything as `discard`/`now`. Emits a per-op `confirmed` flag.
+- **Enrichment** (`classifier-enrich.st`) — runs once per confirmed `create` op; fills `area`/`tags`/`project`/`location`/`estimate_minutes`.
+- **Resolver** (`classifier-resolver.st`) — runs once per unconfirmed `create` op; last chance to re-decide `bucket`/`area`/`tags`/`confirmed` before the task enters the review queue (`/api/unconfirmed`).
 
-Level 1 is a lightweight prompt; level 2 (fallback) is a detailed prompt with examples that runs only when level 1 output fails to parse or classifies everything as `discard`/`now`.
+`classifier.template=custom` swaps Triage and Enrichment for gitignored, Argentinized (voseo) personal versions (`classifier-triage-custom.st`, `classifier-triage-fallback-custom.st`, `classifier-enrich-custom.st`). Resolver has no custom variant — it's the rare ~13% path and stays a single committed template regardless of `classifier.template`.
 
 ## LLM providers
 
-Two providers are wired through Spring AI:
+Two providers are wired through Spring AI, routed independently per pipeline stage (`LlmAction`: `TRIAGE` / `ENRICHMENT` / `RESOLVER`):
 
-- **Groq** — default; Llama 3.3-70b via Groq's OpenAI-compatible endpoint.
-- **Ollama** — optional local inference; enabled with `ollama.enabled=true`.
+- **Groq** — default for every action; Llama 3.3-70b via Groq's OpenAI-compatible endpoint.
+- **Ollama** — optional local inference; enabled with `ollama.enabled=true`. Kept warm with a 30s `keep_alive` plus a startup warmup call so the first real capture doesn't pay the ~42s cold-load. If Ollama fails its healthcheck, that one call falls back to Groq without changing the stored preference.
 
-Check status and switch at runtime:
+Check status and switch at runtime, one stage at a time:
 
 ```bash
 curl http://localhost:8080/api/providers
-curl -X POST http://localhost:8080/api/providers/select -H "Content-Type: application/json" -d '{"provider":"ollama"}'
+curl -X POST http://localhost:8080/api/providers/select \
+  -H "Content-Type: application/json" \
+  -d '{"action":"TRIAGE","provider":"OLLAMA"}'
 ```
 
 ## Vault layout
