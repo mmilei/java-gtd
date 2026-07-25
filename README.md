@@ -39,7 +39,7 @@ Inspired by [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_D
 ## Highlights
 
 - **Second-brain native** — every task lands as frontmattered Markdown in your Obsidian vault: portable, greppable, versionable, no database. Ready for an LLM-maintained knowledge base in the style of Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — this API is the capture layer, your vault is the brain.
-- **Multi-provider LLM** — Groq (Llama 3.3-70b) or a local Ollama model, switchable at runtime via API. Cloud-quality or fully offline.
+- **Multi-provider LLM, per pipeline stage** — Groq (Llama 3.3-70b) or a local Ollama model, switchable independently for each classification step (Triage / Enrichment / Resolver) at runtime via API. Cloud-quality or fully offline.
 - **Conversational task management** — create, edit, move, complete, and dismiss tasks in plain language; multi-operation messages supported.
 - **Confirmation & durable undo** — body edits and dismissals require explicit confirmation, tracked separately from direct edits so the audit trail knows who approved what; every mutation is undoable (`POST /api/undo`) via a durable, append-only event log that survives a restart.
 - **Time estimates** — the classifier infers `estimate_minutes` so the frontend can project when your day ends.

@@ -43,7 +43,7 @@ One message can contain multiple operations:
 | `dismiss` | Discard an existing task, moves the file to `brain/discard/` — also requires confirmation | `target_file`, `title`, `chat_ref` |
 | `patch` | Update metadata (tags, due, today_since) | `filed`, `file` |
 
-Notes classified as `now` or `discard` are not filed (`discard` is logged to `.vault-meta/discard-log.jsonl`). `fallback: true` means the detailed level-2 prompt was needed — see [architecture](architecture.md). When `fallback` is true, `create` also writes `confirmed: false` on the new task's frontmatter — a low-confidence flag reviewed later via `POST /api/items/{file}/confirm`.
+Notes classified as `now` or `discard` are not filed (`discard` is logged to `.vault-meta/discard-log.jsonl`). `fallback: true` means the Triage prompt's detailed level-2 needed to run to parse the response — see [architecture](architecture.md). Independently, `create` writes `confirmed: false` on the new task's frontmatter when the pipeline (Triage, then Resolver if still unsure) ends up unconfirmed — a low-confidence flag reviewed later via `POST /api/items/{file}/confirm`.
 
 ## Approving an LLM proposal
 
@@ -70,8 +70,8 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 | `GET` | `/api/chat/history` | Raw chat transcript, each pending `requires_confirmation` op tagged `resolved: true/false` — `?limit=N` (default 50) |
 | `POST` | `/api/transcribe` | Audio → text via Groq Whisper. multipart/form-data, `audio` field. Returns `{ text }` |
 | `POST` | `/api/items/{filename}/markdownify` | AI-enrich a note: rewrites body, infers tags. Returns `{ file, body, tags }` |
-| `GET` | `/api/providers` | LLM providers with live status. Returns `{ active, providers[] }` |
-| `POST` | `/api/providers/select` | Switch active provider — `{ "provider": "groq" \| "ollama" }` |
+| `GET` | `/api/providers` | LLM provider status per pipeline stage. Returns `{ actions: [{ action, active, providers[] }] }` |
+| `POST` | `/api/providers/select` | Switch the provider for one stage — `{ "action": "TRIAGE" \| "ENRICHMENT" \| "RESOLVER", "provider": "GROQ" \| "OLLAMA" }` |
 
 ### Reading
 

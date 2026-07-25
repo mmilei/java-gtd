@@ -753,7 +753,7 @@ public class VaultService {
             String body = (String) item.remove("body");
             modifier.accept(item);
 
-            // _body_override permite que replaceBody cambie el body
+            // _body_override lets replaceBody swap the body
             String newBody = (String) item.remove("_body_override");
             if (newBody == null) newBody = body;
 

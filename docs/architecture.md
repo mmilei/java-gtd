@@ -11,16 +11,26 @@ POST /api/chat  ("call the dentist tomorrow morning")
  ChatController          ← validates, dispatches each op returned by the classifier
         │
         ▼
- ClassifierService       ← runs the GTD decision tree on the LLM
-  ├─ prompts/classifier.st            level 1: lightweight prompt
-  ├─ prompts/classifier-fallback.st   level 2: detailed prompt with examples,
-  │                                    runs only if level 1 fails to parse
+ ClassifierService       ← runs the GTD decision tree, then a per-op follow-up
+  ├─ Prompt A — Triage    (classifier-triage.st / classifier-triage-fallback.st)
+  │   two-level: cheap prompt first, detailed one only if level 1 fails to
+  │   parse. Emits ops carrying a per-op `confirmed` flag. (LlmAction.TRIAGE)
+  │
+  ├─ for each filed "create" op, exactly one follow-up:
+  │   ├─ confirmed   → Prompt B — Enrichment (classifier-enrich.st)
+  │   │                  fills area/tags/project/location/estimate_minutes
+  │   │                  (LlmAction.ENRICHMENT)
+  │   └─ !confirmed  → Prompt C — Resolver (classifier-resolver.st)
+  │                      last chance to re-decide bucket/area/tags/confirmed
+  │                      before the task enters /api/unconfirmed (LlmAction.RESOLVER)
+  │
   └─ resolveTargetFile()              deterministic title→filename resolution
         │                              for edit/move/done/dismiss ops
         ▼
- LlmProviderService      ← routes the call to the active provider
+ LlmProviderService      ← routes each LlmAction (Triage/Enrichment/Resolver)
+                            independently to its own active provider
   ├─ Groq (Llama 3.3-70b, OpenAI-compatible endpoint)
-  └─ Ollama (local, optional — ollama.enabled=true)
+  └─ Ollama (local, optional — ollama.enabled=true, 30s keep-alive + startup warmup)
         │
         ▼
  VaultService            ← reads/writes .md notes, synchronized mutations
@@ -34,8 +44,8 @@ POST /api/chat  ("call the dentist tomorrow morning")
 
 | Service | Responsibility |
 |---------|---------------|
-| `ClassifierService` | Two-level prompting, JSON parsing, target-file resolution for follow-up ops |
-| `LlmProviderService` | Runtime provider switching (Groq/Ollama), availability checks |
+| `ClassifierService` | Three-prompt pipeline (Triage → Enrichment\|Resolver), JSON parsing, target-file resolution for follow-up ops |
+| `LlmProviderService` | Per-`LlmAction` (Triage/Enrichment/Resolver) provider routing (Groq/Ollama), availability checks, Ollama keep-alive + startup warmup |
 | `VaultService` | All vault I/O: create, mutate, move between buckets, startup self-healing migrations, undo |
 | `EventLog` | Durable, append-only mutation log (`.vault-meta/events.jsonl`) — backs undo and the history/events API |
 | `TranscriptLog` | Durable, append-only raw chat log (`.vault-meta/transcript.jsonl`) — backs `GET /api/chat/history` |
@@ -44,7 +54,8 @@ POST /api/chat  ("call the dentist tomorrow morning")
 
 ## Key design decisions
 
-- **Two-level prompting** — a cheap prompt handles easy inputs; the detailed fallback runs only on parse failure or suspicious output. Cuts latency and cost on the common path. The response flags `fallback: true` when level 2 ran.
+- **Triage → Enrichment/Resolver pipeline** — Prompt A (Triage) always runs two-level (cheap prompt, detailed fallback only on parse failure or suspicious output — the response flags `fallback: true` when level 2 ran) and emits a per-op `confirmed` flag reflecting real classification confidence, not just whether the fallback prompt fired. Every filed `create` op then gets exactly one follow-up: Prompt B (Enrichment) when confirmed, Prompt C (Resolver) when not. Both follow-ups are best-effort — a parse failure just leaves the op exactly as Prompt A left it.
+- **Per-action provider routing** — Groq/Ollama are selected independently per `LlmAction` (`TRIAGE`/`ENRICHMENT`/`RESOLVER`), not globally: switching Triage to Ollama leaves Enrichment/Resolver wherever they were. `POST /api/providers/select` takes `{action, provider}`; `GET /api/providers` returns one entry per action. Ollama calls carry a 30s `keep_alive` plus a startup warmup thread so back-to-back pipeline calls don't each pay a cold model load; an Ollama healthcheck failure falls back to Groq for that one call without touching the stored preference.
 - **Bounded open-tasks context** — before serializing the open tasks into the prompt, a keyword pre-filter (`filterRelevantTasks`) keeps the ~15 tasks most relevant to the message: titles sharing words with it come first (matching is accent/case-insensitive, so `colchón` overlaps `colchon`), and any remaining slots are padded with the other tasks in original list order — a `done`/`edit`/`move`/`dismiss` target whose title shares no word with the message is never evicted by a few incidental matches. A coarser 6000-char/80-item truncation remains as a final safety net.
 - **Deterministic target resolution** — the LLM identifies which existing task a follow-up refers to *by title*; the backend resolves the actual filename with accent-insensitive matching. The LLM never invents filenames.
 - **Confirmation for destructive ops** — `edit`, `update`, and `dismiss` return `requires_confirmation: true` with a current/proposed body diff and a `chat_ref`; the client approves via `POST /api/chat/confirm`, which records the approval as `actor: llm` in the event log, distinct from a human editing the same task directly.
@@ -129,7 +140,7 @@ tags: [health, calls]
 Optional free-form Markdown body.
 ```
 
-The classifier infers context tags and a time estimate from the message; the frontend uses `estimate_minutes` to project when the day's list finishes. It may also infer optional `project` (codebase the task belongs to), `location` (physical place implied by the task, e.g. `hardware store`), and `area` (life area — one of the closed vocabulary configured via `gtd.areas`, English by default and localizable in `application-local.properties`; matching is accent/case-insensitive, the canonical config spelling is persisted, and an out-of-vocabulary value is silently dropped) — each omitted when not clearly inferable. `confirmed: false` may also appear when the classifier used the low-confidence fallback prompt — absent, `true`, or `null` all mean confirmed (chosen so no existing task needs migrating).
+The classifier infers context tags and a time estimate from the message; the frontend uses `estimate_minutes` to project when the day's list finishes. It may also infer optional `project` (codebase the task belongs to), `location` (physical place implied by the task, e.g. `hardware store`), and `area` (life area — one of the closed vocabulary configured via `gtd.areas`, English by default and localizable in `application-local.properties`; matching is accent/case-insensitive, the canonical config spelling is persisted, and an out-of-vocabulary value is silently dropped) — each omitted when not clearly inferable. `confirmed: false` may also appear when Prompt A (Triage) or Prompt C (Resolver) ended the pipeline still unsure about the classification — absent, `true`, or `null` all mean confirmed (chosen so no existing task needs migrating).
 
 ## Testing strategy
 
