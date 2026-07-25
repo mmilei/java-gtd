@@ -17,3 +17,4 @@ src/main/resources/prompts/classifier-enrich-custom.st
 CLAUDE.md
 *.stackdump
 scripts/__pycache__/
+scripts/classifier-bench.py
