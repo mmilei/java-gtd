@@ -79,7 +79,6 @@ Is it a concrete action someone can do?
 - "buy bread for today" → [{"op":"create","bucket":"today","title":"Buy bread","body":"","due":null,"related_people":null,"confirmed":true}]
 - "someday learn piano" → [{"op":"create","bucket":"someday","title":"Learn piano","body":"","due":null,"related_people":null,"confirmed":true}]
 - "fix the tab bug in the gtd-frontend tags" → [{"op":"create","bucket":"backlog","title":"Fix tab bug in the tags","body":"","due":null,"related_people":null,"confirmed":true}]
-- "call the plumber, the kitchen sink is leaking again" → [{"op":"create","bucket":"backlog","title":"Call the plumber","body":"The kitchen sink is leaking again","due":null,"related_people":null,"confirmed":true}]
 - "meet up with Tuli for coffee, she wants to talk about the trip" → [{"op":"create","bucket":"backlog","title":"Meet up with Tuli","body":"She wants to talk about the trip","due":null,"related_people":null,"confirmed":true}]
 - "ask my brother to pick up the package" → [{"op":"create","bucket":"waiting","title":"Package pickup","body":"","due":null,"related_people":["brother"],"confirmed":true}]
 - "I need to sort out the whole rent situation, not sure how to even approach it" → [{"op":"create","bucket":"backlog","title":"Sort out the rent situation","body":"Not sure how to approach it yet","due":null,"related_people":null,"confirmed":false}]
@@ -87,6 +86,5 @@ Is it a concrete action someone can do?
 - open tasks include {"file":"20260601-1-buy-bread.md","title":"Buy bread","bucket":"backlog"}; message "mark buy bread as done" → [{"op":"done","target_title":"Buy bread"}]
 - open tasks include {"file":"20260601-2-old-idea.md","title":"Old idea","bucket":"someday"}; message "discard the old idea task" → [{"op":"dismiss","target_title":"Old idea"}]
 - "asd" → [{"op":"create","bucket":"discard","title":"asd","message":"Doesn't look like a real message — discarding."}]
-- "asdf jkjk" → [{"op":"create","bucket":"discard","title":"asdf jkjk","message":"Doesn't look like a real message — discarding."}]
 
 Message: {message}
