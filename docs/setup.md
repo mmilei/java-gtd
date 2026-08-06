@@ -8,6 +8,7 @@
 - Maven 3.9+
 - A [Groq](https://console.groq.com) API key (free tier works)
 - Optional: [Ollama](https://ollama.com) for local inference
+- Optional: an [Anthropic](https://console.anthropic.com) API key for the Claude provider
 
 ## Quick start
 
@@ -29,6 +30,9 @@ All settings live in `application.properties` and can be overridden per-machine 
 | `classifier.template` | `sample` | Prompt pair: `sample` (public, English) or `custom` (gitignored, personal) |
 | `ollama.enabled` | off | Set `true` to register the local Ollama provider |
 | `spring.ai.ollama.base-url` | `http://localhost:11434` | Ollama server |
+| `anthropic.enabled` | off | Set `true` to register the Anthropic (Claude) provider |
+| `spring.ai.anthropic.api-key` | `$ANTHROPIC_API_KEY` | Anthropic key |
+| `spring.ai.anthropic.chat.options.model` | `claude-sonnet-5` | Anthropic model |
 | `gtd.vault.migrations-enabled` | `true` | Startup self-healing migrations on the vault (today_since, timestamps, bucket mismatches, related_people list, one-time folder-per-bucket split) |
 
 Example `application-local.properties`:
@@ -37,6 +41,7 @@ Example `application-local.properties`:
 gtd.vault.path=D:/path/to/vault
 classifier.template=custom
 ollama.enabled=true
+anthropic.enabled=true
 ```
 
 ## Prompt templates
@@ -51,10 +56,11 @@ The classifier loads three prompt templates from `src/main/resources/prompts/`, 
 
 ## LLM providers
 
-Two providers are wired through Spring AI, routed independently per pipeline stage (`LlmAction`: `TRIAGE` / `ENRICHMENT` / `RESOLVER`):
+Three providers are wired through Spring AI, routed independently per pipeline stage (`LlmAction`: `TRIAGE` / `ENRICHMENT` / `RESOLVER`):
 
 - **Groq** — default for every action; Llama 3.3-70b via Groq's OpenAI-compatible endpoint.
 - **Ollama** — optional local inference; enabled with `ollama.enabled=true`. Kept warm with a 30s `keep_alive` plus a startup warmup call so the first real capture doesn't pay the ~42s cold-load. If Ollama fails its healthcheck, that one call falls back to Groq without changing the stored preference.
+- **Anthropic** — optional Claude provider via Spring AI's native `spring-ai-anthropic-spring-boot-starter`; enabled with `anthropic.enabled=true` plus `ANTHROPIC_API_KEY`. No infra healthcheck (unlike Ollama) — it's a paid cloud API, so "available" just means the key is configured, not pinged on every `/api/providers` call.
 
 Check status and switch at runtime, one stage at a time:
 
@@ -62,7 +68,7 @@ Check status and switch at runtime, one stage at a time:
 curl http://localhost:8080/api/providers
 curl -X POST http://localhost:8080/api/providers/select \
   -H "Content-Type: application/json" \
-  -d '{"action":"TRIAGE","provider":"OLLAMA"}'
+  -d '{"action":"TRIAGE","provider":"ANTHROPIC"}'
 ```
 
 ## Vault layout

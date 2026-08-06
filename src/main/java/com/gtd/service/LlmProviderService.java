@@ -31,13 +31,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * "user picks manually" decision holds). The one exception is infrastructure death: if OLLAMA is
  * selected for an action but its healthcheck fails, that single call is dispatched to Groq without
  * mutating the stored preference, so it's restored automatically the moment Ollama comes back.
+ * ANTHROPIC follows the GROQ propagate-the-error path, not the OLLAMA auto-switch path — it's a
+ * paid cloud API like Groq, not local infra that can be transiently down.
  */
 @Service
 public class LlmProviderService {
 
     private static final Logger log = LoggerFactory.getLogger(LlmProviderService.class);
 
-    public enum LlmProvider { GROQ, OLLAMA }
+    public enum LlmProvider { GROQ, OLLAMA, ANTHROPIC }
 
     /**
      * Keep the model resident in VRAM for 30s after each call so back-to-back pipeline
@@ -56,11 +58,18 @@ public class LlmProviderService {
     @Qualifier("ollamaChatClient")
     ChatClient ollamaChatClient;
 
+    @Autowired(required = false)
+    @Qualifier("anthropicChatClient")
+    ChatClient anthropicChatClient;
+
     @Value("${spring.ai.ollama.base-url:http://localhost:11434}")
     private String ollamaBaseUrl;
 
     @Value("${spring.ai.openai.api-key:}")
     private String groqApiKey;
+
+    @Value("${spring.ai.anthropic.api-key:}")
+    private String anthropicApiKey;
 
     public LlmProviderService(@Qualifier("groqChatClient") ChatClient groqChatClient) {
         this.groqChatClient = groqChatClient;
@@ -91,6 +100,12 @@ public class LlmProviderService {
                     }
                     yield ollamaChatClient.prompt().user(prompt).options(OLLAMA_OPTIONS).call().content();
                 }
+                case ANTHROPIC -> {
+                    if (anthropicChatClient == null) {
+                        throw new IllegalStateException("Anthropic not configured");
+                    }
+                    yield anthropicChatClient.prompt().user(prompt).call().content();
+                }
             };
         } catch (Exception e) {
             log.error("LLM completion failed (provider={}): {}", provider, e.getMessage());
@@ -108,9 +123,11 @@ public class LlmProviderService {
     public void checkProvidersOnStartup() {
         boolean groq = groqAvailable();
         boolean ollama = ollamaAvailable();
-        if (!groq && !ollama) {
-            log.error("No LLM provider available at startup (Groq API key missing, Ollama healthcheck down). "
-                + "App started anyway, but every classification will fail until a provider is configured.");
+        boolean anthropic = anthropicAvailable();
+        if (!groq && !ollama && !anthropic) {
+            log.error("No LLM provider available at startup (Groq API key missing, Ollama healthcheck down, "
+                + "Anthropic not configured). App started anyway, but every classification will fail until "
+                + "a provider is configured.");
         }
     }
 
@@ -149,12 +166,14 @@ public class LlmProviderService {
     public Map<String, Object> describeAll() {
         boolean groqUp = groqAvailable();
         boolean ollamaUp = ollamaAvailable();
+        boolean anthropicUp = anthropicAvailable();
 
         List<Map<String, Object>> actions = new ArrayList<>();
         for (LlmAction action : LlmAction.values()) {
             List<Map<String, Object>> providers = new ArrayList<>();
             providers.add(describe(LlmProvider.GROQ, "Groq", groqUp));
             providers.add(describe(LlmProvider.OLLAMA, "Ollama", ollamaUp));
+            providers.add(describe(LlmProvider.ANTHROPIC, "Anthropic", anthropicUp));
 
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("action", action.name());
@@ -179,6 +198,9 @@ public class LlmProviderService {
         if (provider == LlmProvider.OLLAMA && ollamaChatClient == null) {
             return false;
         }
+        if (provider == LlmProvider.ANTHROPIC && anthropicChatClient == null) {
+            return false;
+        }
         activeByAction.put(action, provider);
         return true;
     }
@@ -193,6 +215,13 @@ public class LlmProviderService {
 
     private boolean groqAvailable() {
         return groqApiKey != null && !groqApiKey.isBlank();
+    }
+
+    // No live healthcheck (unlike Ollama): Anthropic is a paid cloud API, so "available" is
+    // just "the bean exists (anthropic.enabled=true) and a key is configured" — pinging it on
+    // every /api/providers call would burn API credits for no benefit.
+    private boolean anthropicAvailable() {
+        return anthropicChatClient != null && anthropicApiKey != null && !anthropicApiKey.isBlank();
     }
 
     // package-private so unit tests can stub the healthcheck without a live Ollama.

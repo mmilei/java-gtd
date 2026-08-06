@@ -1,5 +1,6 @@
 package com.gtd.config;
 
+import org.springframework.ai.anthropic.AnthropicChatModel;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
@@ -21,6 +22,13 @@ public class LlmConfig {
     @Qualifier("ollamaChatClient")
     @ConditionalOnProperty(name = "ollama.enabled", havingValue = "true")
     public ChatClient ollamaChatClient(OllamaChatModel model) {
+        return ChatClient.builder(model).build();
+    }
+
+    @Bean
+    @Qualifier("anthropicChatClient")
+    @ConditionalOnProperty(name = "anthropic.enabled", havingValue = "true")
+    public ChatClient anthropicChatClient(AnthropicChatModel model) {
         return ChatClient.builder(model).build();
     }
 }

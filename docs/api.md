@@ -71,7 +71,7 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 | `POST` | `/api/transcribe` | Audio → text via Groq Whisper. multipart/form-data, `audio` field. Returns `{ text }` |
 | `POST` | `/api/items/{filename}/markdownify` | AI-enrich a note: rewrites body, infers tags. Returns `{ file, body, tags }` |
 | `GET` | `/api/providers` | LLM provider status per pipeline stage. Returns `{ actions: [{ action, active, providers[] }] }` |
-| `POST` | `/api/providers/select` | Switch the provider for one stage — `{ "action": "TRIAGE" \| "ENRICHMENT" \| "RESOLVER", "provider": "GROQ" \| "OLLAMA" }` |
+| `POST` | `/api/providers/select` | Switch the provider for one stage — `{ "action": "TRIAGE" \| "ENRICHMENT" \| "RESOLVER", "provider": "GROQ" \| "OLLAMA" \| "ANTHROPIC" }` |
 
 ### Reading
 

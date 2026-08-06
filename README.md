@@ -39,7 +39,7 @@ Inspired by [Getting Things Done](https://en.wikipedia.org/wiki/Getting_Things_D
 ## Highlights
 
 - **Second-brain native** — every task lands as frontmattered Markdown in your Obsidian vault: portable, greppable, versionable, no database. Ready for an LLM-maintained knowledge base in the style of Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — this API is the capture layer, your vault is the brain.
-- **Multi-provider LLM, per pipeline stage** — Groq (Llama 3.3-70b) or a local Ollama model, switchable independently for each classification step (Triage / Enrichment / Resolver) at runtime via API. Cloud-quality or fully offline.
+- **Multi-provider LLM, per pipeline stage** — Groq (Llama 3.3-70b), Anthropic (Claude), or a local Ollama model, switchable independently for each classification step (Triage / Enrichment / Resolver) at runtime via API. Cloud-quality or fully offline.
 - **Conversational task management** — create, edit, move, complete, and dismiss tasks in plain language; multi-operation messages supported.
 - **Confirmation & durable undo** — body edits and dismissals require explicit confirmation, tracked separately from direct edits so the audit trail knows who approved what; every mutation is undoable (`POST /api/undo`) via a durable, append-only event log that survives a restart.
 - **Time estimates** — the classifier infers `estimate_minutes` so the frontend can project when your day ends.
@@ -68,19 +68,20 @@ The API is a **capture-and-organize layer that sits on top of a folder you alrea
 | Language | Java 21 |
 | Framework | Spring Boot 3.3 |
 | AI integration | Spring AI + OpenAI-compatible APIs |
-| LLM providers | Groq (Llama 3.3-70b) · Ollama (local) |
+| LLM providers | Groq (Llama 3.3-70b) · Anthropic (Claude) · Ollama (local) |
 | Storage | Obsidian vault (Markdown + YAML frontmatter) |
 | Tests | JUnit 5 · Mockito — 110 tests |
 
 ## Dependencies
 
-The runtime footprint is deliberately small — four direct dependencies:
+The runtime footprint is deliberately small — five direct dependencies:
 
 | Dependency | Purpose |
 |------------|---------|
 | `spring-boot-starter-web` | REST API layer (controllers, JSON serialization, embedded server) |
 | `spring-ai-openai-spring-boot-starter` | Groq integration via its OpenAI-compatible API, plus Whisper audio transcription |
 | `spring-ai-ollama-spring-boot-starter` | Local LLM fallback (Ollama), enabled through `application-local.properties` |
+| `spring-ai-anthropic-spring-boot-starter` | Anthropic (Claude) provider, enabled through `application-local.properties` |
 | `spring-boot-starter-test` | JUnit 5 + Mockito + AssertJ test stack (test scope only) |
 
 Everything else (vault storage, event log, undo) is plain Java on the filesystem — no database, no message broker.
@@ -94,7 +95,7 @@ export GTD_VAULT_PATH=/path/to/vault
 mvn spring-boot:run                  # → http://localhost:8080
 ```
 
-Requires Java 21+ and Maven 3.9+. Full configuration options (local properties, custom prompts, Ollama setup): [docs/setup.md](docs/setup.md).
+Requires Java 21+ and Maven 3.9+. Full configuration options (local properties, custom prompts, Ollama/Anthropic setup): [docs/setup.md](docs/setup.md).
 
 ## Documentation
 
