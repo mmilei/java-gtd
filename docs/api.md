@@ -2,7 +2,7 @@
 
 # API reference
 
-REST API that classifies natural language into GTD buckets and files the results as Markdown notes in an Obsidian vault. 24 endpoints, all under `/api`.
+REST API that classifies natural language into GTD buckets and files the results as Markdown notes in an Obsidian vault. 25 endpoints, all under `/api`.
 
 ## The chat endpoint
 

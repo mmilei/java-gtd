@@ -144,4 +144,4 @@ The classifier infers context tags and a time estimate from the message; the fro
 
 ## Testing strategy
 
-127 tests. Controllers are tested with `@WebMvcTest` + Mockito (HTTP contract, op dispatch, confirmation flow); `VaultServiceTest` exercises real filesystem I/O against `@TempDir` vaults, including the startup migrations, the folder-per-bucket split, and undo end-to-end (create+undo, move+undo without leaving a duplicate); `EventLogTest` covers append/tail/rotation and tolerance of corrupted lines.
+157 tests. Controllers are tested with `@WebMvcTest` + Mockito (HTTP contract, op dispatch, confirmation flow); `VaultServiceTest` exercises real filesystem I/O against `@TempDir` vaults, including the startup migrations, the folder-per-bucket split, and undo end-to-end (create+undo, move+undo without leaving a duplicate); `EventLogTest` covers append/tail/rotation and tolerance of corrupted lines.
