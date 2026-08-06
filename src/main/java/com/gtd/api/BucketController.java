@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api")
@@ -52,6 +53,25 @@ public class BucketController {
     @GetMapping("/areas")
     public List<String> areas() {
         return vault.validAreas();
+    }
+
+    private static final Set<String> CREATABLE_BUCKETS = Set.of("today", "backlog", "waiting", "someday", "reference");
+
+    /** Files a task straight from user-entered fields — no classifier involved, unlike POST /api/chat. */
+    @PostMapping("/items")
+    public ResponseEntity<Map<String, Object>> createItem(@RequestBody Map<String, Object> body) {
+        String bucket = (String) body.get("bucket");
+        if (bucket == null || !CREATABLE_BUCKETS.contains(bucket)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "bucket must be one of " + CREATABLE_BUCKETS));
+        }
+        String title = body.get("title") != null ? String.valueOf(body.get("title")).strip() : "";
+        if (title.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "title is required"));
+        }
+        Map<String, Object> item = new HashMap<>(body);
+        item.put("title", title);
+        String filename = vault.write(item, Actor.USER);
+        return ResponseEntity.ok(Map.of("filed", true, "file", filename, "bucket", bucket, "title", title));
     }
 
     @PostMapping("/items/{filename}/done")
