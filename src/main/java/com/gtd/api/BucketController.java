@@ -57,6 +57,16 @@ public class BucketController {
 
     private static final Set<String> CREATABLE_BUCKETS = Set.of("today", "backlog", "waiting", "someday", "reference");
 
+    /**
+     * Frontmatter fields a client may set when creating an item by hand. write() ignores anything it
+     * doesn't know, so this is the endpoint's contract rather than its last line of defence: it keeps
+     * out capture_source and confirmed, which belong to the LLM capture path — a hand-made task has no
+     * originating utterance, and nothing typed by hand should land in the review queue.
+     */
+    private static final Set<String> CREATABLE_FIELDS = Set.of(
+        "bucket", "title", "body", "tags", "related_people",
+        "due", "area", "project", "location", "estimate_minutes", "priority");
+
     /** Files a task straight from user-entered fields — no classifier involved, unlike POST /api/chat. */
     @PostMapping("/items")
     public ResponseEntity<Map<String, Object>> createItem(@RequestBody Map<String, Object> body) {
@@ -69,6 +79,7 @@ public class BucketController {
             return ResponseEntity.badRequest().body(Map.of("error", "title is required"));
         }
         Map<String, Object> item = new HashMap<>(body);
+        item.keySet().retainAll(CREATABLE_FIELDS);
         item.put("title", title);
         String filename = vault.write(item, Actor.USER);
         return ResponseEntity.ok(Map.of("filed", true, "file", filename, "bucket", bucket, "title", title));

@@ -21,3 +21,6 @@ scripts/classifier-bench.py
 LOOP-STATE.md
 LOOP-USAGE.md
 .ua/
+
+# Stray log from a claude-obsidian vault hook that ran with this repo as cwd
+.vault-meta/

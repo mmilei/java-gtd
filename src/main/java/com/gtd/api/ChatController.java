@@ -209,8 +209,7 @@ public class ChatController {
         // and this keeps a normal task's note clean.
         toWrite.remove("confirmed");
         // capture_source preserves the exact user string that produced this task — the transcript
-        // has it too, but only globally; this links task↔string on the note itself. It's not a
-        // CLASSIFIER_KEY, so VaultService.write() persists it via the generic passthrough.
+        // has it too, but only globally; this links task↔string on the note itself.
         if (captureSource != null && !captureSource.isBlank()) {
             toWrite.put("capture_source", captureSource);
         }

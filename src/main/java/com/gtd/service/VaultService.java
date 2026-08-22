@@ -46,7 +46,6 @@ public class VaultService {
     private final ReentrantLock lock = new ReentrantLock();
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "related_people", "tags", "message", "op", "project", "location", "area");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
     private static final List<String> ALL_BUCKETS = List.of("today", "backlog", "waiting", "someday", "reference");
     // Closed vocabulary for the `area` life-area field — the first LLM-controlled value in this
@@ -109,19 +108,9 @@ public class VaultService {
         frontmatter.put("status", "open");
         frontmatter.put("created", LocalDate.now().toString());
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
-        // project is in CLASSIFIER_KEYS (excluded from the generic passthrough below), so it needs
-        // explicit handling here — and doing it explicitly lets us drop blank/null values the LLM
-        // may emit instead of persisting an empty project field.
-        Object projectRaw = item.get("project");
-        if (projectRaw != null && !String.valueOf(projectRaw).isBlank()) {
-            frontmatter.put("project", String.valueOf(projectRaw).strip());
-        }
-        // location mirrors project (in CLASSIFIER_KEYS, so excluded from the generic passthrough)
-        // — a freeform physical place inferred per-message, no vault-wide known-values context.
-        Object locationRaw = item.get("location");
-        if (locationRaw != null && !String.valueOf(locationRaw).isBlank()) {
-            frontmatter.put("location", String.valueOf(locationRaw).strip());
-        }
+        // location is a freeform physical place inferred per-message, no vault-wide known-values context.
+        putIfPresent(frontmatter, "project", item.get("project"));
+        putIfPresent(frontmatter, "location", item.get("location"));
         // area is validated against a closed vocabulary — an out-of-vocab value is dropped silently.
         String area = normalizeArea(item.get("area"));
         if (area != null) frontmatter.put("area", area);
@@ -132,9 +121,15 @@ public class VaultService {
         frontmatter.put("tags", tags);
         if ("today".equals(bucket)) frontmatter.put("today_since", LocalDate.now().toString());
 
-        item.entrySet().stream()
-            .filter(e -> !CLASSIFIER_KEYS.contains(e.getKey()) && !frontmatter.containsKey(e.getKey()))
-            .forEach(e -> frontmatter.put(e.getKey(), e.getValue()));
+        // capture_source is the exact user string that produced this task, set by ChatController
+        // on the capture path — a hand-created item has none.
+        putIfPresent(frontmatter, "capture_source", item.get("capture_source"));
+        putIfPresent(frontmatter, "priority", item.get("priority"));
+        // estimate_minutes stays out of putIfPresent: it's a number, and strip() would make it a String.
+        if (item.get("estimate_minutes") != null) frontmatter.put("estimate_minutes", item.get("estimate_minutes"));
+        // Only ever persist confirmed:false — absent and true mean the same thing to listUnconfirmed(),
+        // and leaving the key off keeps a normal task's note clean. See ChatController.handleCreate.
+        if (Boolean.FALSE.equals(item.get("confirmed"))) frontmatter.put("confirmed", false);
 
         String body = (String) item.getOrDefault("body", "");
         String content = MarkdownSerializer.serialize(frontmatter, body);
@@ -895,6 +890,11 @@ public class VaultService {
                 log.warn("{}: could not list {}: {}", migrationName, dir, e.getMessage());
             }
         }
+    }
+
+    /** Writes key only when raw has real content — a blank field is worse than an absent one. */
+    private static void putIfPresent(Map<String, Object> frontmatter, String key, Object raw) {
+        if (raw != null && !String.valueOf(raw).isBlank()) frontmatter.put(key, String.valueOf(raw).strip());
     }
 
     private static String toSlug(String title) {
