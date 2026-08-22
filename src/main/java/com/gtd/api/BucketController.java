@@ -58,11 +58,9 @@ public class BucketController {
     private static final Set<String> CREATABLE_BUCKETS = Set.of("today", "backlog", "waiting", "someday", "reference");
 
     /**
-     * Frontmatter fields a client may set when creating an item by hand. VaultService.write() copies
-     * any key it doesn't recognize straight into the note's frontmatter — harmless when the caller is
-     * the classifier (whose keys the prompt controls), but this endpoint takes an arbitrary request
-     * body, so unknown keys are dropped here rather than persisted. Lifecycle fields (status,
-     * done_date, discarded_date, today_since) are owned by the vault, never by the caller.
+     * Frontmatter fields a client may set by hand. write() passes keys it doesn't recognize straight
+     * through to the note, so this endpoint — unlike the classifier, whose keys the prompt controls —
+     * has to filter. Lifecycle fields (status, done_date, discarded_date, today_since) are the vault's.
      */
     private static final Set<String> CREATABLE_FIELDS = Set.of(
         "bucket", "title", "body", "tags", "related_people",
@@ -79,8 +77,8 @@ public class BucketController {
         if (title.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "title is required"));
         }
-        Map<String, Object> item = new HashMap<>();
-        body.forEach((k, v) -> { if (CREATABLE_FIELDS.contains(k)) item.put(k, v); });
+        Map<String, Object> item = new HashMap<>(body);
+        item.keySet().retainAll(CREATABLE_FIELDS);
         item.put("title", title);
         String filename = vault.write(item, Actor.USER);
         return ResponseEntity.ok(Map.of("filed", true, "file", filename, "bucket", bucket, "title", title));
