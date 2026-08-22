@@ -51,6 +51,18 @@ class LlmProviderServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void describeAllListsAllThreeProvidersPerAction() {
+        LlmProviderService service = newService();
+        List<Map<String, Object>> actions = (List<Map<String, Object>>) service.describeAll().get("actions");
+        for (Map<String, Object> entry : actions) {
+            List<Map<String, Object>> providers = (List<Map<String, Object>>) entry.get("providers");
+            List<String> ids = providers.stream().map(p -> (String) p.get("id")).toList();
+            assertThat(ids).containsExactlyInAnyOrder("GROQ", "OLLAMA", "ANTHROPIC");
+        }
+    }
+
+    @Test
     void selectSwitchesOnlyThatActionLeavingOthersUntouched() {
         LlmProviderService service = newService();
         // ollamaChatClient is package-private (@Autowired(required = false)) — inject a mock
@@ -78,6 +90,55 @@ class LlmProviderServiceTest {
         // which mirrors "Ollama not installed" (the @ConditionalOnProperty bean never created).
         LlmProviderService service = newService();
         assertThat(service.select(LlmAction.TRIAGE, "OLLAMA")).isFalse();
+    }
+
+    @Test
+    void selectAnthropicReturnsFalseWhenNotConfigured() {
+        // anthropicChatClient field stays null: mirrors anthropic.enabled=false (the default),
+        // same as the Ollama case above.
+        LlmProviderService service = newService();
+        assertThat(service.select(LlmAction.TRIAGE, "ANTHROPIC")).isFalse();
+    }
+
+    @Test
+    void selectAnthropicSwitchesOnlyThatActionLeavingOthersUntouched() {
+        LlmProviderService service = newService();
+        service.anthropicChatClient = mock(ChatClient.class);
+
+        assertThat(service.select(LlmAction.ENRICHMENT, "ANTHROPIC")).isTrue();
+        assertThat(activeFor(service, LlmAction.ENRICHMENT)).isEqualTo("ANTHROPIC");
+        assertThat(activeFor(service, LlmAction.TRIAGE)).isEqualTo("GROQ");
+        assertThat(activeFor(service, LlmAction.RESOLVER)).isEqualTo("GROQ");
+    }
+
+    @Test
+    void anthropicSelectedDispatchesToAnthropicWithNoOllamaFallbackPath() {
+        LlmProviderService service = newService();
+        ChatClient anthropic = mock(ChatClient.class);
+        service.anthropicChatClient = anthropic;
+        service.select(LlmAction.TRIAGE, "ANTHROPIC");
+        stubContent(anthropic, "anthropic-result");
+
+        String out = service.complete(LlmAction.TRIAGE, "classify this");
+
+        assertThat(out).isEqualTo("anthropic-result");
+        verify(groqChatClient, never()).prompt(); // no auto-switch fallback, unlike Ollama
+    }
+
+    @Test
+    void anthropicRuntimeFailurePropagatesWithoutFallingBackToGroq() {
+        // Anthropic is a paid cloud API like Groq — a failure propagates as-is, no auto-switch
+        // (that behavior is Ollama-specific, since Ollama is local infra that can be transiently down).
+        LlmProviderService service = newService();
+        ChatClient anthropic = mock(ChatClient.class);
+        service.anthropicChatClient = anthropic;
+        service.select(LlmAction.TRIAGE, "ANTHROPIC");
+        when(anthropic.prompt()).thenThrow(new RuntimeException("anthropic 529"));
+
+        assertThatThrownBy(() -> service.complete(LlmAction.TRIAGE, "classify this"))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessage("anthropic 529");
+        verify(groqChatClient, never()).prompt();
     }
 
     @Test

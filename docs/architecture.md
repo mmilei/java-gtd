@@ -30,6 +30,7 @@ POST /api/chat  ("call the dentist tomorrow morning")
  LlmProviderService      ← routes each LlmAction (Triage/Enrichment/Resolver)
                             independently to its own active provider
   ├─ Groq (Llama 3.3-70b, OpenAI-compatible endpoint)
+  ├─ Anthropic (Claude, optional — anthropic.enabled=true, spring-ai-anthropic-spring-boot-starter)
   └─ Ollama (local, optional — ollama.enabled=true, 30s keep-alive + startup warmup)
         │
         ▼
@@ -45,7 +46,7 @@ POST /api/chat  ("call the dentist tomorrow morning")
 | Service | Responsibility |
 |---------|---------------|
 | `ClassifierService` | Three-prompt pipeline (Triage → Enrichment\|Resolver), JSON parsing, target-file resolution for follow-up ops |
-| `LlmProviderService` | Per-`LlmAction` (Triage/Enrichment/Resolver) provider routing (Groq/Ollama), availability checks, Ollama keep-alive + startup warmup |
+| `LlmProviderService` | Per-`LlmAction` (Triage/Enrichment/Resolver) provider routing (Groq/Ollama/Anthropic), availability checks, Ollama keep-alive + startup warmup |
 | `VaultService` | All vault I/O: create, mutate, move between buckets, startup self-healing migrations, undo |
 | `EventLog` | Durable, append-only mutation log (`.vault-meta/events.jsonl`) — backs undo and the history/events API |
 | `TranscriptLog` | Durable, append-only raw chat log (`.vault-meta/transcript.jsonl`) — backs `GET /api/chat/history` |
@@ -55,7 +56,7 @@ POST /api/chat  ("call the dentist tomorrow morning")
 ## Key design decisions
 
 - **Triage → Enrichment/Resolver pipeline** — Prompt A (Triage) always runs two-level (cheap prompt, detailed fallback only on parse failure or suspicious output — the response flags `fallback: true` when level 2 ran) and emits a per-op `confirmed` flag reflecting real classification confidence, not just whether the fallback prompt fired. Every filed `create` op then gets exactly one follow-up: Prompt B (Enrichment) when confirmed, Prompt C (Resolver) when not. Both follow-ups are best-effort — a parse failure just leaves the op exactly as Prompt A left it.
-- **Per-action provider routing** — Groq/Ollama are selected independently per `LlmAction` (`TRIAGE`/`ENRICHMENT`/`RESOLVER`), not globally: switching Triage to Ollama leaves Enrichment/Resolver wherever they were. `POST /api/providers/select` takes `{action, provider}`; `GET /api/providers` returns one entry per action. Ollama calls carry a 30s `keep_alive` plus a startup warmup thread so back-to-back pipeline calls don't each pay a cold model load; an Ollama healthcheck failure falls back to Groq for that one call without touching the stored preference.
+- **Per-action provider routing** — Groq/Ollama/Anthropic are selected independently per `LlmAction` (`TRIAGE`/`ENRICHMENT`/`RESOLVER`), not globally: switching Triage to Ollama leaves Enrichment/Resolver wherever they were. `POST /api/providers/select` takes `{action, provider}`; `GET /api/providers` returns one entry per action. Ollama calls carry a 30s `keep_alive` plus a startup warmup thread so back-to-back pipeline calls don't each pay a cold model load; an Ollama healthcheck failure falls back to Groq for that one call without touching the stored preference. Anthropic (via `spring-ai-anthropic-spring-boot-starter`, native tool — no hand-rolled HTTP client) is off by default (`anthropic.enabled=false`) and has no infra fallback: it's a paid cloud API like Groq, so a runtime failure propagates to the caller instead of auto-switching.
 - **Bounded open-tasks context** — before serializing the open tasks into the prompt, a keyword pre-filter (`filterRelevantTasks`) keeps the ~15 tasks most relevant to the message: titles sharing words with it come first (matching is accent/case-insensitive, so `colchón` overlaps `colchon`), and any remaining slots are padded with the other tasks in original list order — a `done`/`edit`/`move`/`dismiss` target whose title shares no word with the message is never evicted by a few incidental matches. A coarser 6000-char/80-item truncation remains as a final safety net.
 - **Deterministic target resolution** — the LLM identifies which existing task a follow-up refers to *by title*; the backend resolves the actual filename with accent-insensitive matching. The LLM never invents filenames.
 - **Confirmation for destructive ops** — `edit`, `update`, and `dismiss` return `requires_confirmation: true` with a current/proposed body diff and a `chat_ref`; the client approves via `POST /api/chat/confirm`, which records the approval as `actor: llm` in the event log, distinct from a human editing the same task directly.

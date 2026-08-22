@@ -10,29 +10,29 @@ import org.springframework.test.context.TestPropertySource;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Loads the real Spring context (unlike the @WebMvcTest slices and plain unit tests
- * elsewhere) to catch wiring regressions that only surface at boot: the
- * ChatClientAutoConfiguration exclusion in application.properties, the qualified
- * ChatClient beans in LlmConfig, and the OpenAI/Ollama/Anthropic autoconfiguration all
- * have to agree, and nothing else in this test suite exercises that combination.
+ * Companion to {@link LlmConfigWiringTest}: proves the Anthropic provider is registered by
+ * config alone (anthropic.enabled=true), no code change required — the acceptance criterion
+ * for G4 (add Anthropic as a third swappable provider). Ollama stays off here so this test
+ * isolates the Anthropic wiring path instead of re-covering Ollama's own wiring test.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @TestPropertySource(properties = {
         "spring.ai.openai.api-key=dummy-test-key",
-        "gtd.vault.path=target/test-vault-wiring",
+        "spring.ai.anthropic.api-key=dummy-test-key",
+        "gtd.vault.path=target/test-vault-wiring-anthropic",
         "ollama.enabled=false",
-        "anthropic.enabled=false"
+        "anthropic.enabled=true"
 })
-class LlmConfigWiringTest {
+class LlmConfigAnthropicWiringTest {
 
     @Autowired
     ApplicationContext context;
 
     @Test
-    void contextLoadsWithExactlyOneChatClientBeanWhenOllamaAndAnthropicDisabled() {
-        assertThat(context.getBeansOfType(ChatClient.class)).hasSize(1);
+    void anthropicChatClientBeanRegistersWhenEnabledByConfig() {
+        assertThat(context.getBeansOfType(ChatClient.class)).hasSize(2);
         assertThat(context.containsBean("groqChatClient")).isTrue();
+        assertThat(context.containsBean("anthropicChatClient")).isTrue();
         assertThat(context.containsBean("ollamaChatClient")).isFalse();
-        assertThat(context.containsBean("anthropicChatClient")).isFalse();
     }
 }
