@@ -58,9 +58,10 @@ public class BucketController {
     private static final Set<String> CREATABLE_BUCKETS = Set.of("today", "backlog", "waiting", "someday", "reference");
 
     /**
-     * Frontmatter fields a client may set by hand. write() passes keys it doesn't recognize straight
-     * through to the note, so this endpoint — unlike the classifier, whose keys the prompt controls —
-     * has to filter. Lifecycle fields (status, done_date, discarded_date, today_since) are the vault's.
+     * Frontmatter fields a client may set when creating an item by hand. write() ignores anything it
+     * doesn't know, so this is the endpoint's contract rather than its last line of defence: it keeps
+     * out capture_source and confirmed, which belong to the LLM capture path — a hand-made task has no
+     * originating utterance, and nothing typed by hand should land in the review queue.
      */
     private static final Set<String> CREATABLE_FIELDS = Set.of(
         "bucket", "title", "body", "tags", "related_people",

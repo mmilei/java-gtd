@@ -46,7 +46,6 @@ public class VaultService {
     private final ReentrantLock lock = new ReentrantLock();
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-    private static final Set<String> CLASSIFIER_KEYS = Set.of("bucket", "title", "body", "due", "related_people", "tags", "message", "op", "project", "location", "area");
     private static final Set<String> INACTIVE_STATUSES = Set.of("done", "dismissed");
     private static final List<String> ALL_BUCKETS = List.of("today", "backlog", "waiting", "someday", "reference");
     // Closed vocabulary for the `area` life-area field — the first LLM-controlled value in this
@@ -109,15 +108,13 @@ public class VaultService {
         frontmatter.put("status", "open");
         frontmatter.put("created", LocalDate.now().toString());
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
-        // project is in CLASSIFIER_KEYS (excluded from the generic passthrough below), so it needs
-        // explicit handling here — and doing it explicitly lets us drop blank/null values the LLM
-        // may emit instead of persisting an empty project field.
+        // Dropping blank/null rather than persisting an empty project field — the LLM emits both.
         Object projectRaw = item.get("project");
         if (projectRaw != null && !String.valueOf(projectRaw).isBlank()) {
             frontmatter.put("project", String.valueOf(projectRaw).strip());
         }
-        // location mirrors project (in CLASSIFIER_KEYS, so excluded from the generic passthrough)
-        // — a freeform physical place inferred per-message, no vault-wide known-values context.
+        // location mirrors project — a freeform physical place inferred per-message, no
+        // vault-wide known-values context.
         Object locationRaw = item.get("location");
         if (locationRaw != null && !String.valueOf(locationRaw).isBlank()) {
             frontmatter.put("location", String.valueOf(locationRaw).strip());
@@ -132,9 +129,20 @@ public class VaultService {
         frontmatter.put("tags", tags);
         if ("today".equals(bucket)) frontmatter.put("today_since", LocalDate.now().toString());
 
-        item.entrySet().stream()
-            .filter(e -> !CLASSIFIER_KEYS.contains(e.getKey()) && !frontmatter.containsKey(e.getKey()))
-            .forEach(e -> frontmatter.put(e.getKey(), e.getValue()));
+        // capture_source preserves the exact user string that produced this task (set by
+        // ChatController on the capture path; a hand-created item has no such string).
+        Object captureSource = item.get("capture_source");
+        if (captureSource != null && !String.valueOf(captureSource).isBlank()) {
+            frontmatter.put("capture_source", String.valueOf(captureSource).strip());
+        }
+        // Only ever persist confirmed:false — absent and true mean the same thing to listUnconfirmed(),
+        // and leaving the key off keeps a normal task's note clean. See ChatController.handleCreate.
+        if (Boolean.FALSE.equals(item.get("confirmed"))) frontmatter.put("confirmed", false);
+        if (item.get("estimate_minutes") != null) frontmatter.put("estimate_minutes", item.get("estimate_minutes"));
+        Object priority = item.get("priority");
+        if (priority != null && !String.valueOf(priority).isBlank()) {
+            frontmatter.put("priority", String.valueOf(priority).strip());
+        }
 
         String body = (String) item.getOrDefault("body", "");
         String content = MarkdownSerializer.serialize(frontmatter, body);

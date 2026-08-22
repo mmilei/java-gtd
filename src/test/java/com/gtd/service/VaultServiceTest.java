@@ -815,10 +815,62 @@ class VaultServiceTest {
     }
 
     @Test
-    void shouldPassThroughEstimateMinutesOnWriteAndAcceptItInPatchMeta(@TempDir Path tempDir) throws Exception {
+    void shouldIgnoreUnknownKeysOnWrite(@TempDir Path tempDir) throws Exception {
         VaultService vault = newVault(tempDir);
 
-        // classifier op carries estimate_minutes → generic passthrough files it in the frontmatter
+        // write() used to copy every key it didn't recognize into the frontmatter, which made any
+        // caller handing it unvalidated input — POST /api/items, or the LLM hallucinating a field
+        // into a create op — able to write arbitrary keys and vault-owned lifecycle fields.
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Clean the kitchen");
+        op.put("done_date", "2020-01-01");
+        op.put("discarded_date", "2020-01-01");
+        op.put("done", true);
+        op.put("whatever", "junk");
+        String filename = vault.write(op, Actor.USER);
+
+        Map<String, Object> saved = vault.read(filename);
+        assertThat(saved).containsEntry("status", "open");
+        assertThat(saved).doesNotContainKeys("done_date", "discarded_date", "done", "whatever");
+    }
+
+    @Test
+    void shouldPersistCaptureSourceOnWrite(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        // ChatController attaches the originating utterance to a captured task; blank means the
+        // caller had none to give, and an empty frontmatter key is worse than no key.
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Call the dentist");
+        op.put("capture_source", "recordame llamar al dentista");
+        assertThat(vault.read(vault.write(op, Actor.USER)))
+            .containsEntry("capture_source", "recordame llamar al dentista");
+
+        op.put("capture_source", "   ");
+        assertThat(vault.read(vault.write(op, Actor.USER))).doesNotContainKey("capture_source");
+    }
+
+    @Test
+    void shouldPersistPriorityOnWrite(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        // priority arrives on create from POST /api/items; patchMeta coverage alone left the
+        // create path untested.
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Pay the rent");
+        op.put("priority", "high");
+
+        assertThat(vault.read(vault.write(op, Actor.USER))).containsEntry("priority", "high");
+    }
+
+    @Test
+    void shouldPersistEstimateMinutesOnWriteAndAcceptItInPatchMeta(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        // classifier op carries estimate_minutes → write() files it in the frontmatter
         Map<String, Object> op = new java.util.LinkedHashMap<>();
         op.put("bucket", "backlog");
         op.put("title", "Clean the kitchen");
