@@ -103,6 +103,47 @@ class BucketControllerTest {
     }
 
     @Test
+    void createItem() throws Exception {
+        when(vault.write(anyMap(), eq(Actor.USER))).thenReturn(FILE);
+        mvc.perform(post("/api/items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bucket\":\"backlog\",\"title\":\"Water the plants\",\"tags\":[\"home\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.filed").value(true))
+                .andExpect(jsonPath("$.file").value(FILE))
+                .andExpect(jsonPath("$.bucket").value("backlog"));
+        verify(vault).write(argThat(item ->
+                "backlog".equals(item.get("bucket")) && "Water the plants".equals(item.get("title"))), eq(Actor.USER));
+    }
+
+    @Test
+    void createItemMissingBucket() throws Exception {
+        mvc.perform(post("/api/items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Water the plants\"}"))
+                .andExpect(status().isBadRequest());
+        verify(vault, never()).write(anyMap(), any());
+    }
+
+    @Test
+    void createItemInvalidBucket() throws Exception {
+        mvc.perform(post("/api/items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bucket\":\"discard\",\"title\":\"nope\"}"))
+                .andExpect(status().isBadRequest());
+        verify(vault, never()).write(anyMap(), any());
+    }
+
+    @Test
+    void createItemBlankTitle() throws Exception {
+        mvc.perform(post("/api/items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bucket\":\"backlog\",\"title\":\"  \"}"))
+                .andExpect(status().isBadRequest());
+        verify(vault, never()).write(anyMap(), any());
+    }
+
+    @Test
     void markDone() throws Exception {
         mvc.perform(post("/api/items/" + FILE + "/done"))
                 .andExpect(status().isOk())
