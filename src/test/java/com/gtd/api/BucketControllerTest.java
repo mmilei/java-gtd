@@ -117,6 +117,23 @@ class BucketControllerTest {
     }
 
     @Test
+    void createItemDropsUnknownAndLifecycleFields() throws Exception {
+        when(vault.write(anyMap(), eq(Actor.USER))).thenReturn(FILE);
+        mvc.perform(post("/api/items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bucket\":\"backlog\",\"title\":\"Water the plants\","
+                                + "\"status\":\"done\",\"done_date\":\"2020-01-01\",\"whatever\":\"junk\"}"))
+                .andExpect(status().isOk());
+        // write() copies unrecognized keys straight into frontmatter, so the controller must not
+        // forward anything the client isn't allowed to set.
+        verify(vault).write(argThat(item ->
+                !item.containsKey("status")
+                        && !item.containsKey("done_date")
+                        && !item.containsKey("whatever")
+                        && "Water the plants".equals(item.get("title"))), eq(Actor.USER));
+    }
+
+    @Test
     void createItemMissingBucket() throws Exception {
         mvc.perform(post("/api/items")
                         .contentType(MediaType.APPLICATION_JSON)
