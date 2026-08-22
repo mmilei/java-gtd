@@ -108,17 +108,9 @@ public class VaultService {
         frontmatter.put("status", "open");
         frontmatter.put("created", LocalDate.now().toString());
         if (item.get("due") != null) frontmatter.put("due", item.get("due"));
-        // Dropping blank/null rather than persisting an empty project field — the LLM emits both.
-        Object projectRaw = item.get("project");
-        if (projectRaw != null && !String.valueOf(projectRaw).isBlank()) {
-            frontmatter.put("project", String.valueOf(projectRaw).strip());
-        }
-        // location mirrors project — a freeform physical place inferred per-message, no
-        // vault-wide known-values context.
-        Object locationRaw = item.get("location");
-        if (locationRaw != null && !String.valueOf(locationRaw).isBlank()) {
-            frontmatter.put("location", String.valueOf(locationRaw).strip());
-        }
+        // location is a freeform physical place inferred per-message, no vault-wide known-values context.
+        putIfPresent(frontmatter, "project", item.get("project"));
+        putIfPresent(frontmatter, "location", item.get("location"));
         // area is validated against a closed vocabulary — an out-of-vocab value is dropped silently.
         String area = normalizeArea(item.get("area"));
         if (area != null) frontmatter.put("area", area);
@@ -129,20 +121,15 @@ public class VaultService {
         frontmatter.put("tags", tags);
         if ("today".equals(bucket)) frontmatter.put("today_since", LocalDate.now().toString());
 
-        // capture_source preserves the exact user string that produced this task (set by
-        // ChatController on the capture path; a hand-created item has no such string).
-        Object captureSource = item.get("capture_source");
-        if (captureSource != null && !String.valueOf(captureSource).isBlank()) {
-            frontmatter.put("capture_source", String.valueOf(captureSource).strip());
-        }
+        // capture_source is the exact user string that produced this task, set by ChatController
+        // on the capture path — a hand-created item has none.
+        putIfPresent(frontmatter, "capture_source", item.get("capture_source"));
+        putIfPresent(frontmatter, "priority", item.get("priority"));
+        // estimate_minutes stays out of putIfPresent: it's a number, and strip() would make it a String.
+        if (item.get("estimate_minutes") != null) frontmatter.put("estimate_minutes", item.get("estimate_minutes"));
         // Only ever persist confirmed:false — absent and true mean the same thing to listUnconfirmed(),
         // and leaving the key off keeps a normal task's note clean. See ChatController.handleCreate.
         if (Boolean.FALSE.equals(item.get("confirmed"))) frontmatter.put("confirmed", false);
-        if (item.get("estimate_minutes") != null) frontmatter.put("estimate_minutes", item.get("estimate_minutes"));
-        Object priority = item.get("priority");
-        if (priority != null && !String.valueOf(priority).isBlank()) {
-            frontmatter.put("priority", String.valueOf(priority).strip());
-        }
 
         String body = (String) item.getOrDefault("body", "");
         String content = MarkdownSerializer.serialize(frontmatter, body);
@@ -903,6 +890,11 @@ public class VaultService {
                 log.warn("{}: could not list {}: {}", migrationName, dir, e.getMessage());
             }
         }
+    }
+
+    /** Writes key only when raw has real content — a blank field is worse than an absent one. */
+    private static void putIfPresent(Map<String, Object> frontmatter, String key, Object raw) {
+        if (raw != null && !String.valueOf(raw).isBlank()) frontmatter.put(key, String.valueOf(raw).strip());
     }
 
     private static String toSlug(String title) {

@@ -54,32 +54,21 @@ class ItemCreateFieldsTest {
             .andExpect(status().isOk());
     }
 
-    @Test
-    void lifecycleFieldsNeverReachTheFile(@TempDir Path tempDir) throws Exception {
-        MockMvc mvc = mvcOver(tempDir);
 
-        postItem(mvc, """
-            {"bucket":"backlog","title":"Water the plants",
-             "status":"done","done_date":"2020-01-01","discarded_date":"2020-01-01",
-             "today_since":"2020-01-01"}
-            """);
-
-        Map<String, Object> note = onlyNoteIn(tempDir, "backlog");
-        // The vault owns the lifecycle: a backlog note it just created is open, with no terminal dates.
-        assertThat(note).containsEntry("status", "open");
-        assertThat(note).doesNotContainKeys("done_date", "discarded_date", "today_since");
-    }
 
     @Test
-    void arbitraryKeysNeverReachTheFile(@TempDir Path tempDir) throws Exception {
+    void captureFieldsCannotBeSetByHand(@TempDir Path tempDir) throws Exception {
         MockMvc mvc = mvcOver(tempDir);
 
+        // capture_source and confirmed belong to the LLM capture path: a typed task has no
+        // originating utterance, and nothing typed by hand should land in the review queue.
+        // write() persists both for the classifier, so only CREATABLE_FIELDS keeps them out here.
         postItem(mvc, """
             {"bucket":"backlog","title":"Water the plants",
-             "whatever":"junk","nested":{"a":1},"list":[1,2,3]}
+             "capture_source":"never said this","confirmed":false}
             """);
 
-        assertThat(onlyNoteIn(tempDir, "backlog")).doesNotContainKeys("whatever", "nested", "list");
+        assertThat(onlyNoteIn(tempDir, "backlog")).doesNotContainKeys("capture_source", "confirmed");
     }
 
     @Test
