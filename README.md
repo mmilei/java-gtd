@@ -61,6 +61,10 @@ The API is a **capture-and-organize layer that sits on top of a folder you alrea
 - **Two-way editing.** The API never assumes it's the only writer: it re-reads notes on each operation and runs idempotent startup migrations, so a note you moved or retagged by hand in Obsidian is respected, not clobbered.
 - **Frontend optional.** The [gtd-frontend](https://github.com/mmilei/gtd-frontend) web client ([live demo](https://mmilei.github.io/gtd-frontend)) is a convenient face over these endpoints, but the whole loop works headless — `curl`, a shortcut, or Obsidian itself.
 
+## Also: the same logic as a Claude Code skill
+
+The GTD classification pipeline above isn't tied to this REST API — [`.claude/skills/gtd-triage/`](.claude/skills/gtd-triage/SKILL.md) implements the identical decision tree, bucket taxonomy, and note format as a [Claude Code](https://claude.com/product/claude-code) skill, so an AI coding agent can triage straight into the same vault a phone shortcut or the web frontend writes to. Same buckets, same frontmatter, same vocabulary-reuse discipline — two runtimes, one source of truth, safe to interleave because the backend's self-healing startup migrations respect whatever either one wrote.
+
 ## Stack
 
 | Layer | Tech |
@@ -70,7 +74,7 @@ The API is a **capture-and-organize layer that sits on top of a folder you alrea
 | AI integration | Spring AI + OpenAI-compatible APIs |
 | LLM providers | Groq (Llama 3.3-70b) · Ollama (local) |
 | Storage | Obsidian vault (Markdown + YAML frontmatter) |
-| Tests | JUnit 5 · Mockito — 110 tests |
+| Tests | JUnit 5 · Mockito — 157 tests |
 
 ## Dependencies
 
@@ -100,7 +104,8 @@ Requires Java 21+ and Maven 3.9+. Full configuration options (local properties, 
 
 | Doc | Contents |
 |-----|----------|
-| [docs/api.md](docs/api.md) | Full REST API reference — 24 endpoints |
+| [docs/api.md](docs/api.md) | Full REST API reference — 25 endpoints |
+| [.claude/skills/gtd-triage/SKILL.md](.claude/skills/gtd-triage/SKILL.md) | The same triage logic as a Claude Code skill |
 | [docs/architecture.md](docs/architecture.md) | Services, classification pipeline, GTD buckets, event log & undo, vault layout |
 | [docs/setup.md](docs/setup.md) | Configuration, prompt templates, provider switching |
 

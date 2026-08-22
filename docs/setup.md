@@ -95,4 +95,4 @@ Notes are plain Markdown with YAML frontmatter — readable and editable from Ob
 mvn test
 ```
 
-98 tests across controller suites (`@WebMvcTest` with mocked services), `VaultServiceTest` (real filesystem I/O via `@TempDir`), and `EventLogTest` (append-only log semantics).
+157 tests across controller suites (`@WebMvcTest` with mocked services), `VaultServiceTest` (real filesystem I/O via `@TempDir`), and `EventLogTest` (append-only log semantics).
