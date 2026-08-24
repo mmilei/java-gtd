@@ -94,11 +94,11 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/items/{filename}/done` | Mark completed, move to `brain/done/` |
+| `POST` | `/api/items/{filename}/done` | Mark completed, move to `brain/done/`. Adds `open_dependencies` (`[{ file, title }]`) when the task had unfinished `depends_on` entries — advisory only, the close always happens |
 | `POST` | `/api/items/{filename}/dismiss` | Discard (decided not to do it), move to `brain/discard/` |
 | `POST` | `/api/items/{filename}/move` | Reclassify — `{ "bucket": "...", "due": "YYYY-MM-DD" }` |
 | `PUT` | `/api/items/{filename}/body` | Replace body — `{ "body": "..." }` |
-| `PUT` | `/api/items/{filename}/meta` | Update metadata — any of `title`, `tags`, `due`, `today_since`, `area`, `estimate_minutes`, `confirmed`, `project`, `location`, `priority`. Not `related_people`: it is derived from the body's `[[Name]]` mentions on every write |
+| `PUT` | `/api/items/{filename}/meta` | Update metadata — any of `title`, `tags`, `due`, `today_since`, `area`, `estimate_minutes`, `confirmed`, `project`, `location`, `priority`, `depends_on`. Not `related_people`: it is derived from the body's `[[Name]]` mentions on every write |
 | `POST` | `/api/items/{filename}/confirm` | Flip a low-confidence task's `confirmed: false` → `true` after review |
 | `POST` | `/api/undo` | Undo the most recent mutation, durable and restart-safe (`EventLog`-backed, cap 50) |
 
@@ -119,6 +119,8 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
   "file": "20260702-090000-call-the-dentist.md"
 }
 ```
+
+`depends_on` is an optional list of filenames of other tasks this one waits on. Every entry is checked against the vault when it is written (an unknown filename is a `400`), and nothing is revalidated afterwards: dead references and cycles are out of scope. It never blocks anything — closing a task with unfinished dependencies succeeds and reports them, see `POST /api/items/{filename}/done`.
 
 Once a task is completed or dismissed, `status` becomes `done`/`dismissed`, the file moves to `brain/done/`/`brain/discard/`, and a write-once `done_date`/`discarded_date` is added (never overwritten by later edits). `confirmed: false` appears only on tasks the classifier filed with low confidence — its absence, `true`, or `null` all mean confirmed.
 

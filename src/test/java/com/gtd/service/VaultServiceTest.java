@@ -1383,6 +1383,86 @@ class VaultServiceTest {
             .extracting(VaultService.ResolvedLink::kind).containsExactly(VaultService.LinkKind.TASK);
     }
 
+    /** Files a backlog task and returns its filename. */
+    private static String task(VaultService vault, String title) {
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", title);
+        return vault.write(op, Actor.USER);
+    }
+
+    @Test
+    void dependsOnAcceptsFilenamesTheVaultActuallyHolds(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        String blocker = task(vault, "Order the tiles");
+        String blocked = task(vault, "Lay the tiles");
+
+        vault.patchMeta(blocked, Map.of("depends_on", List.of(blocker)), Actor.USER);
+
+        assertThat(vault.read(blocked).get("depends_on")).asInstanceOf(LIST).containsExactly(blocker);
+    }
+
+    @Test
+    void dependsOnRejectsAFileThatIsNotInTheVault(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        String blocked = task(vault, "Lay the tiles");
+
+        assertThatThrownBy(() -> vault.patchMeta(blocked, Map.of("depends_on", List.of("20990101-000000-ghost.md")), Actor.USER))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("depends_on")
+            .hasMessageContaining("20990101-000000-ghost.md");
+        // rejected before anything is written: the note keeps no half-applied value
+        assertThat(vault.read(blocked)).doesNotContainKey("depends_on");
+    }
+
+    @Test
+    void createRejectsADependencyThatIsNotInTheVault(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Lay the tiles");
+        op.put("depends_on", List.of("20990101-000000-ghost.md"));
+
+        assertThatThrownBy(() -> vault.write(op, Actor.USER))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("depends_on");
+        try (var files = Files.list(tempDir.resolve("brain/backlog"))) {
+            assertThat(files).isEmpty();
+        }
+    }
+
+    @Test
+    void markDoneClosesTheItemAnywayAndReportsTheDependenciesStillOpen(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        String open = task(vault, "Order the tiles");
+        String finished = task(vault, "Measure the floor");
+        String blocked = task(vault, "Lay the tiles");
+        vault.markDone(finished, Actor.USER);
+        vault.patchMeta(blocked, Map.of("depends_on", List.of(open, finished)), Actor.USER);
+
+        var stillOpen = vault.markDone(blocked, Actor.USER);
+
+        // warn, never forbid: the close happened regardless
+        assertThat(tempDir.resolve("brain/done").resolve(blocked)).exists();
+        assertThat(vault.read(blocked).get("status")).isEqualTo("done");
+        // only the unfinished one is reported, with the title the app needs to name it
+        assertThat(stillOpen).containsExactly(Map.of("file", open, "title", "Order the tiles"));
+    }
+
+    @Test
+    void markDoneReportsNothingWhenEveryDependencyIsAlreadyClosed(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        String done = task(vault, "Order the tiles");
+        String dismissed = task(vault, "Call the tiler");
+        String blocked = task(vault, "Lay the tiles");
+        vault.patchMeta(blocked, Map.of("depends_on", List.of(done, dismissed)), Actor.USER);
+        vault.markDone(done, Actor.USER);
+        vault.dismissItem(dismissed, Actor.USER);
+
+        assertThat(vault.markDone(blocked, Actor.USER)).isEmpty();
+        assertThat(vault.read(blocked).get("status")).isEqualTo("done");
+    }
+
     @Test
     void everyLinkCarriesAnObsidianUriBuiltFromTheConfiguredVaultPath(@TempDir Path tempDir) throws Exception {
         // Built server-side on purpose: the frontend must never need to know where the vault

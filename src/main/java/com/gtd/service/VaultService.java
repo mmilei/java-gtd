@@ -130,6 +130,13 @@ public class VaultService {
         frontmatter.put("tags", tags);
         if ("today".equals(bucket)) frontmatter.put("today_since", LocalDate.now().toString());
 
+        // depends_on names other notes, so every entry is checked against the vault before the
+        // file is written — see validateDependsOn.
+        if (item.get("depends_on") != null) {
+            List<String> deps = validateDependsOn(item.get("depends_on"));
+            if (!deps.isEmpty()) frontmatter.put("depends_on", deps);
+        }
+
         // capture_source is the exact user string that produced this task, set by ChatController
         // on the capture path — a hand-created item has none.
         putIfPresent(frontmatter, "capture_source", item.get("capture_source"));
@@ -334,11 +341,60 @@ public class VaultService {
         }
     }
 
-    public void markDone(String filename, Actor actor) {
+    /**
+     * Closes the item and reports which of its `depends_on` entries were still open at that
+     * moment, as {@code {file, title}} pairs. Advisory only: an open dependency never blocks the
+     * close — the app warns, the user decides — so the answer is a notice the caller may relay,
+     * not an error. Empty list when the item has no dependencies or all of them are finished.
+     */
+    public List<Map<String, Object>> markDone(String filename, Actor actor) {
+        List<Map<String, Object>> stillOpen = new ArrayList<>();
         mutate(filename, doneDir, actor, "done", item -> {
+            stillOpen.addAll(openDependencies(item));
             item.put("status", "done");
             item.putIfAbsent("done_date", LocalDate.now().toString());
         });
+        return stillOpen;
+    }
+
+    /**
+     * The item's dependencies that are neither done nor dismissed, as {@code {file, title}}.
+     * A dependency whose file is gone is skipped rather than reported: it can't be open, and
+     * chasing dead references is deliberately out of scope (nothing revalidates depends_on after
+     * the write that accepted it).
+     */
+    private List<Map<String, Object>> openDependencies(Map<String, Object> item) {
+        if (!(item.get("depends_on") instanceof List<?> deps)) return List.of();
+        List<Map<String, Object>> open = new ArrayList<>();
+        for (Object raw : deps) {
+            Path file = findFile(String.valueOf(raw).strip());
+            if (file == null) continue;
+            Map<String, Object> dep = readFile(file);
+            if (dep == null || INACTIVE_STATUSES.contains(String.valueOf(dep.getOrDefault("status", "")))) continue;
+            open.add(Map.of("file", dep.get("file"), "title", String.valueOf(dep.getOrDefault("title", dep.get("file")))));
+        }
+        return open;
+    }
+
+    /**
+     * Every entry must name a note the vault actually holds — a dependency on a file that isn't
+     * there is a typo, and the whole patch/create is rejected so it never reaches disk. Only the
+     * write path checks: a file deleted afterwards leaves a dead reference behind on purpose
+     * (see openDependencies), and cycles are not detected at all.
+     */
+    private List<String> validateDependsOn(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            throw new IllegalArgumentException("depends_on must be a list of filenames");
+        }
+        List<String> deps = new ArrayList<>();
+        for (Object entry : list) {
+            String dep = String.valueOf(entry).strip();
+            if (findFile(dep) == null) {
+                throw new IllegalArgumentException("depends_on: no such file in the vault: " + dep);
+            }
+            if (!deps.contains(dep)) deps.add(dep);
+        }
+        return deps;
     }
 
     public void dismissItem(String filename, Actor actor) {
@@ -366,12 +422,19 @@ public class VaultService {
         // related/related_people are absent on purpose: both are derived from the body's
         // wikilinks by deriveLinks(), so accepting them here would let a caller set a value the
         // next save silently overwrites.
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "area", "estimate_minutes", "confirmed", "project", "location", "priority");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "area", "estimate_minutes", "confirmed", "project", "location", "priority", "depends_on");
         mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             if ("area".equals(k)) {
                 String area = normalizeArea(v);
                 if (area != null) item.put("area", area);
+                return;
+            }
+            if ("depends_on".equals(k)) {
+                // Throws before anything is written when an entry names a file the vault doesn't
+                // have. An empty list drops the key instead of leaving `depends_on: []` behind.
+                List<String> deps = validateDependsOn(v);
+                if (deps.isEmpty()) item.remove("depends_on"); else item.put("depends_on", deps);
                 return;
             }
             item.put(k, v);
@@ -1023,11 +1086,19 @@ public class VaultService {
         if (!filename.matches("[\\w.\\-]+\\.md")) {
             throw new IllegalArgumentException("Invalid filename: " + filename);
         }
+        Path file = findFile(filename);
+        if (file == null) throw new IllegalArgumentException("File not found:" + filename);
+        return file;
+    }
+
+    /** Same lookup as resolveFile without the exceptions — for callers that treat "not there" as an answer. */
+    private Path findFile(String filename) {
+        if (!filename.matches("[\\w.\\-]+\\.md")) return null;
         for (Path dir : allDirs) {
             Path p = dir.resolve(filename);
             if (Files.exists(p)) return p;
         }
-        throw new IllegalArgumentException("File not found:" + filename);
+        return null;
     }
 
     private Map<String, Object> readFile(Path file) {

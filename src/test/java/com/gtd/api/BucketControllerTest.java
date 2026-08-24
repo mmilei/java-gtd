@@ -168,6 +168,18 @@ class BucketControllerTest {
         verify(vault).markDone(FILE, Actor.USER);
     }
 
+    /** The close still succeeds — the open dependencies ride along as an extra key for the client to warn with. */
+    @Test
+    void markDoneReportsDependenciesThatWereStillOpen() throws Exception {
+        when(vault.markDone(FILE, Actor.USER))
+            .thenReturn(List.of(Map.of("file", "20260625-110000-blocker.md", "title", "Order the tiles")));
+
+        mvc.perform(post("/api/items/" + FILE + "/done"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.done").value(true))
+                .andExpect(jsonPath("$.open_dependencies[0].title").value("Order the tiles"));
+    }
+
     @Test
     void confirmItem() throws Exception {
         mvc.perform(post("/api/items/" + FILE + "/confirm"))

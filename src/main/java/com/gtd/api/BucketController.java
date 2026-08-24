@@ -85,7 +85,7 @@ public class BucketController {
      */
     private static final Set<String> CREATABLE_FIELDS = Set.of(
         "bucket", "title", "body", "tags",
-        "due", "area", "project", "location", "estimate_minutes", "priority");
+        "due", "area", "project", "location", "estimate_minutes", "priority", "depends_on");
 
     /** Files a task straight from user-entered fields — no classifier involved, unlike POST /api/chat. */
     @PostMapping("/items")
@@ -105,10 +105,19 @@ public class BucketController {
         return ResponseEntity.ok(Map.of("filed", true, "file", filename, "bucket", bucket, "title", title));
     }
 
+    /**
+     * Closing never fails on an unfinished dependency — warn, never forbid. `open_dependencies`
+     * is added only when there were some, so the existing `{done, file}` contract is unchanged for
+     * every other task; a client that ignores the extra key keeps working.
+     */
     @PostMapping("/items/{filename}/done")
     public ResponseEntity<Map<String, Object>> markDone(@PathVariable String filename) {
-        vault.markDone(filename, Actor.USER);
-        return ResponseEntity.ok(Map.of("done", true, "file", filename));
+        List<Map<String, Object>> openDependencies = vault.markDone(filename, Actor.USER);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("done", true);
+        response.put("file", filename);
+        if (!openDependencies.isEmpty()) response.put("open_dependencies", openDependencies);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/items/{filename}/dismiss")
