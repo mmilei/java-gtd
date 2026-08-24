@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Set;
 
 @RestController
@@ -55,16 +56,35 @@ public class BucketController {
         return vault.validAreas();
     }
 
+    /** The people the vault knows, one page per person in brain/entities/ — the source for the editor's [[Name]] autocomplete. */
+    @GetMapping("/people")
+    public List<String> people() {
+        return vault.knownPeople();
+    }
+
+    /**
+     * Every page a [[wikilink]] can name — tasks in any bucket (done and discarded included),
+     * people, and wiki/brain notes — as `{ name, kind, path }`. The editor fetches this once and
+     * filters in the browser: the vocabulary is a few hundred entries, so a request per keystroke
+     * would buy nothing.
+     */
+    @GetMapping("/pages")
+    public List<VaultService.ResolvedLink> pages() {
+        return vault.vaultPages();
+    }
+
     private static final Set<String> CREATABLE_BUCKETS = Set.of("today", "backlog", "waiting", "someday", "reference");
 
     /**
      * Frontmatter fields a client may set when creating an item by hand. write() ignores anything it
      * doesn't know, so this is the endpoint's contract rather than its last line of defence: it keeps
      * out capture_source and confirmed, which belong to the LLM capture path — a hand-made task has no
-     * originating utterance, and nothing typed by hand should land in the review queue.
+     * originating utterance, and nothing typed by hand should land in the review queue. related and
+     * related_people are out for a different reason: write() derives both from the body's wikilinks,
+     * so a value sent here would be overwritten on the way in.
      */
     private static final Set<String> CREATABLE_FIELDS = Set.of(
-        "bucket", "title", "body", "tags", "related_people",
+        "bucket", "title", "body", "tags",
         "due", "area", "project", "location", "estimate_minutes", "priority");
 
     /** Files a task straight from user-entered fields — no classifier involved, unlike POST /api/chat. */
@@ -124,10 +144,21 @@ public class BucketController {
         return ResponseEntity.ok(Map.of("updated", true, "file", filename));
     }
 
+    /**
+     * One item, plus `links`: what each [[wikilink]] in its body actually points at. Computed on
+     * read rather than stored, because a link's kind and path change when a page moves and the
+     * frontmatter would go stale. The frontend routes by kind — TASK opens in the app, PERSON
+     * filters the task list, NOTE hands the path to Obsidian via obsidian://open.
+     *
+     * Only on the single-item read: the bucket listings don't render bodies, so they'd pay for a
+     * vault walk per card and use none of it.
+     */
     @GetMapping("/items/{filename}")
     public ResponseEntity<Map<String, Object>> getItem(@PathVariable String filename) {
         try {
-            return ResponseEntity.ok(vault.read(filename));
+            Map<String, Object> item = new LinkedHashMap<>(vault.read(filename));
+            item.put("links", vault.resolveLinks((String) item.get("body")));
+            return ResponseEntity.ok(item);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }

@@ -256,15 +256,16 @@ class ClassifierServiceTest {
     }
 
     @Test
-    void buildPromptSubstitutesKnownProjectsKnownTagsAndValidAreasPlaceholders() {
-        String template = "today={today} ctx={user_context} tasks={open_tasks} projects={known_projects} tags={known_tags} areas={valid_areas} msg={message}";
+    void buildPromptSubstitutesKnownProjectsKnownTagsValidAreasAndKnownPeoplePlaceholders() {
+        String template = "today={today} ctx={user_context} tasks={open_tasks} projects={known_projects} tags={known_tags} areas={valid_areas} people={known_people} msg={message}";
         String result = ClassifierService.buildPrompt(
-                template, "2026-07-07", "profile", "[]", "java-gtd, frontend-gtd", "compras, salud", "personal, friends", "fix the bug");
+                template, "2026-07-07", "profile", "[]", "java-gtd, frontend-gtd", "compras, salud", "personal, friends", "Ana, Mary-Jane", "fix the bug");
         assertThat(result).isEqualTo(
-                "today=2026-07-07 ctx=profile tasks=[] projects=java-gtd, frontend-gtd tags=compras, salud areas=personal, friends msg=fix the bug");
+                "today=2026-07-07 ctx=profile tasks=[] projects=java-gtd, frontend-gtd tags=compras, salud areas=personal, friends people=Ana, Mary-Jane msg=fix the bug");
         assertThat(result).doesNotContain("{known_projects}");
         assertThat(result).doesNotContain("{known_tags}");
         assertThat(result).doesNotContain("{valid_areas}");
+        assertThat(result).doesNotContain("{known_people}");
     }
 
     @Test
