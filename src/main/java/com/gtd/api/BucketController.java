@@ -56,10 +56,16 @@ public class BucketController {
         return vault.validAreas();
     }
 
-    /** The people the vault knows, one page per person in brain/entities/ — the source for the editor's [[Name]] autocomplete. */
+    /**
+     * The people the vault knows, one page per person in brain/entities/ — the source for the
+     * editor's `@` autocomplete. Same {@code ResolvedLink} shape as {@link #pages()} (a subset of
+     * it, in fact) so the frontend's `VaultPage` type covers both without a second contract.
+     */
     @GetMapping("/people")
-    public List<String> people() {
-        return vault.knownPeople();
+    public List<VaultService.ResolvedLink> people() {
+        return vault.vaultPages().stream()
+            .filter(link -> link.kind() == VaultService.LinkKind.PERSON)
+            .toList();
     }
 
     /**
