@@ -63,6 +63,20 @@ public class BucketController {
     }
 
     /**
+     * Creates a person page in brain/entities/ so the editor can name someone the vault doesn't
+     * know yet — offered by the `@` autocomplete when what was typed matches nobody. A blank name
+     * or one that already exists comes back as 400 with the reason (see VaultService.createPerson).
+     *
+     * Scoped to that one directory by design: this is not a generic "create a note" endpoint, and
+     * wiki/ pages in particular belong to the ingest workflow, not to this app.
+     */
+    @PostMapping("/people")
+    public ResponseEntity<Map<String, Object>> createPerson(@RequestBody Map<String, String> body) {
+        String name = vault.createPerson(body.get("name"));
+        return ResponseEntity.ok(Map.of("created", true, "name", name));
+    }
+
+    /**
      * Every page a [[wikilink]] can name — tasks in any bucket (done and discarded included),
      * people, and wiki/brain notes — as `{ name, kind, path }`. The editor fetches this once and
      * filters in the browser: the vocabulary is a few hundred entries, so a request per keystroke

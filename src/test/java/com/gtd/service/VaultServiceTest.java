@@ -1181,6 +1181,55 @@ class VaultServiceTest {
         assertThat(newVault(tempDir).knownPeople()).isEmpty();
     }
 
+    @Test
+    void createPersonShouldWriteAnEntityPage(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        assertThat(vault.createPerson("  Quinn  ")).isEqualTo("Quinn");
+
+        // Asserted on the parsed frontmatter rather than the bytes: what has to be right is what
+        // Obsidian and knownPeople() read back, not how the shared serializer lays YAML out.
+        Map<String, Object> page = com.gtd.util.MarkdownSerializer.parse(
+            Files.readString(tempDir.resolve("brain/entities/Quinn.md")));
+        assertThat(page).containsOnly(
+            java.util.Map.entry("type", "entity"),
+            java.util.Map.entry("entity_type", "person"),
+            java.util.Map.entry("title", "Quinn"),
+            java.util.Map.entry("created", LocalDate.now().toString()),
+            java.util.Map.entry("tags", List.of()),
+            java.util.Map.entry("body", ""));
+        // The page it just wrote is one the [[Name]] resolution can reach.
+        assertThat(vault.knownPeople()).containsExactly("Quinn");
+    }
+
+    @Test
+    void createPersonShouldRejectABlankName(@TempDir Path tempDir) {
+        VaultService vault = newVault(tempDir);
+        assertThatThrownBy(() -> vault.createPerson("   "))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("name is required");
+    }
+
+    @Test
+    void createPersonShouldRejectAnExistingPerson(@TempDir Path tempDir) throws Exception {
+        givenPerson(tempDir, "Quinn");
+        VaultService vault = newVault(tempDir);
+
+        // Differently cased, so this also covers the near-duplicate page the check exists to stop.
+        assertThatThrownBy(() -> vault.createPerson("quinn"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Person already exists: Quinn");
+        assertThat(vault.knownPeople()).containsExactly("Quinn");
+    }
+
+    @Test
+    void createPersonShouldRejectANameThatIsNotAPlainFilename(@TempDir Path tempDir) {
+        VaultService vault = newVault(tempDir);
+        assertThatThrownBy(() -> vault.createPerson("../../etc/passwd"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid person name");
+    }
+
         @Test
     void shouldFollowAnAliasedWikilinkToItsTarget(@TempDir Path tempDir) throws Exception {
         // "[[Ana|Annie]]" reads as Annie but points at Ana — the alias is how the migration

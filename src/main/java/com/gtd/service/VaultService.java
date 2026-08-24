@@ -274,6 +274,64 @@ public class VaultService {
         return new ArrayList<>(peopleByName().keySet());
     }
 
+    // Anything that would make the name something other than a plain file name in brain/entities/:
+    // path separators, the Windows-reserved set, control characters. A leading dot is out too, which
+    // also settles "." and "..".
+    private static final Pattern UNSAFE_PERSON_NAME = Pattern.compile("[\\\\/:*?\"<>|\\p{Cntrl}]");
+    private static final int MAX_PERSON_NAME = 100;
+
+    /**
+     * Creates a person page in brain/entities/ with the minimal frontmatter knownPeople() and
+     * Obsidian need, and returns the canonical name it was filed under.
+     *
+     * The one write this service makes outside the task buckets, and deliberately the narrowest
+     * one that works: a fixed directory and a fixed shape, not a "write a file anywhere in the
+     * vault" primitive. wiki/ in particular is not this app's to write — that zone has ingest
+     * conventions (addresses, cross-refs, index) nothing here knows about.
+     *
+     * An existing name is an error rather than an overwrite, matched the way deriveLinks() matches
+     * so a different casing or a registered alias counts as the same person instead of minting the
+     * near-duplicate page the whole entities/ design exists to avoid.
+     */
+    public String createPerson(String rawName) {
+        String name = rawName == null ? "" : rawName.strip();
+        if (name.isEmpty()) throw new IllegalArgumentException("name is required");
+        if (name.length() > MAX_PERSON_NAME || name.startsWith(".") || UNSAFE_PERSON_NAME.matcher(name).find()) {
+            throw new IllegalArgumentException("Invalid person name: " + name);
+        }
+
+        lock.lock();
+        try {
+            String normalized = TextNormalizer.normalize(name);
+            for (Map.Entry<String, String> known : peopleByName().entrySet()) {
+                if (TextNormalizer.normalize(known.getKey()).equals(normalized)) {
+                    throw new IllegalArgumentException("Person already exists: " + known.getValue());
+                }
+            }
+
+            Map<String, Object> frontmatter = new LinkedHashMap<>();
+            frontmatter.put("type", "entity");
+            frontmatter.put("entity_type", "person");
+            frontmatter.put("title", name);
+            frontmatter.put("created", LocalDate.now().toString());
+            frontmatter.put("tags", new ArrayList<String>());
+            try {
+                Files.createDirectories(entitiesDir);
+                // CREATE_NEW rather than a plain write: the existence check above is the useful
+                // error message, this is the one that can't be raced.
+                Files.writeString(entitiesDir.resolve(name + ".md"),
+                    MarkdownSerializer.serialize(frontmatter, ""), java.nio.file.StandardOpenOption.CREATE_NEW);
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                throw new IllegalArgumentException("Person already exists: " + name);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            return name;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /**
      * Every name (canonical or alias) → the canonical name of the page it reaches. Keys keep their
      * written form; matching against them goes through TextNormalizer at the call site.

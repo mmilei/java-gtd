@@ -59,6 +59,23 @@ class BucketControllerTest {
     }
 
     @Test
+    void createPersonReturnsTheNameTheVaultFiledItUnder() throws Exception {
+        when(vault.createPerson("Quinn")).thenReturn("Quinn");
+        mvc.perform(post("/api/people").contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Quinn\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(true))
+                .andExpect(jsonPath("$.name").value("Quinn"));
+    }
+
+    @Test
+    void createPersonSurfacesTheVaultRejectionAsABadRequest() throws Exception {
+        when(vault.createPerson("Quinn")).thenThrow(new IllegalArgumentException("Person already exists: Quinn"));
+        mvc.perform(post("/api/people").contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Quinn\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Person already exists: Quinn"));
+    }
+
+    @Test
     void areasReturnsConfiguredVocabularyInOrder() throws Exception {
         when(vault.validAreas()).thenReturn(List.of("personal", "friends", "exercise"));
         mvc.perform(get("/api/areas"))
