@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.Normalizer;
@@ -18,6 +20,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -34,6 +38,10 @@ public class VaultService {
     private final Path resourcesDir;
     private final Path doneDir;
     private final Path discardDir;
+    // People pages, one file per person. Not a bucket: never listed as tasks, never written to,
+    // only read to resolve [[Name]] mentions in a body to a canonical name. Kept out of allDirs
+    // so resolveFile() can't reach it.
+    private final Path entitiesDir;
     private final Path legacyInboxDir;
     private final List<Path> allDirs;
     private final Path archiveDuplicatesDir;
@@ -74,6 +82,7 @@ public class VaultService {
         this.doneDir        = Path.of(vaultPath, "brain/done");
         this.discardDir     = Path.of(vaultPath, "brain/discard");
         this.legacyInboxDir = Path.of(vaultPath, "brain/inbox");
+        this.entitiesDir    = Path.of(vaultPath, "brain/entities");
         this.allDirs = List.of(todayDir, backlogDir, waitingDir, somedayDir, resourcesDir, doneDir, discardDir);
         this.archiveDuplicatesDir = Path.of(vaultPath, "brain/.archive/duplicates");
         this.eventLog = eventLog;
@@ -88,7 +97,6 @@ public class VaultService {
             migrateTodaySince();
             migrateTimestamps();
             migrateBucketMismatch();
-            migrateRelatedPeopleToList();
         }
     }
 
@@ -114,8 +122,9 @@ public class VaultService {
         // area is validated against a closed vocabulary — an out-of-vocab value is dropped silently.
         String area = normalizeArea(item.get("area"));
         if (area != null) frontmatter.put("area", area);
-        List<String> relatedPeople = relatedPeopleAsList(item.get("related_people"));
-        if (!relatedPeople.isEmpty()) frontmatter.put("related_people", relatedPeople);
+        // related_people is derived from the body, never taken from the caller — see deriveLinks.
+        String body = (String) item.getOrDefault("body", "");
+        deriveLinks(frontmatter, body);
         List<String> tags = tagsFrom(item);
         normalizeTypeTags(tags, bucket);
         frontmatter.put("tags", tags);
@@ -131,7 +140,6 @@ public class VaultService {
         // and leaving the key off keeps a normal task's note clean. See ChatController.handleCreate.
         if (Boolean.FALSE.equals(item.get("confirmed"))) frontmatter.put("confirmed", false);
 
-        String body = (String) item.getOrDefault("body", "");
         String content = MarkdownSerializer.serialize(frontmatter, body);
 
         try {
@@ -239,6 +247,56 @@ public class VaultService {
         return new ArrayList<>(projects);
     }
 
+    /**
+     * Every name that reaches a person page in brain/entities/: the filename, which is the
+     * canonical name ("Mary-Jane.md" → "Mary-Jane"), plus each entry of its `aliases` frontmatter.
+     * Feeds both the [[Name]] resolution in deriveLinks() and the classifier's context, so a
+     * mention lands on the existing page instead of minting a near-duplicate — the failure mode
+     * of the freeform column this replaces, which accumulated several spellings and nicknames of
+     * the same person as if they were different people.
+     *
+     * Aliases are listed flat, as names in their own right, so the classifier can use whichever
+     * one the user actually said: a nickname writes [[Nickname]], which reaches that person's
+     * page and is stored under their canonical name. `aliases` is Obsidian's own mechanism and it resolves those links the
+     * same way, so the app and the vault agree on who a name points at.
+     *
+     * Index pages (a leading underscore, by Obsidian convention) are not people. A missing
+     * directory means a vault with no people pages yet, not an error.
+     */
+    public List<String> knownPeople() {
+        return new ArrayList<>(peopleByName().keySet());
+    }
+
+    /**
+     * Every name (canonical or alias) → the canonical name of the page it reaches. Keys keep their
+     * written form; matching against them goes through TextNormalizer at the call site.
+     */
+    private Map<String, String> peopleByName() {
+        Map<String, String> byName = new TreeMap<>();
+        try (Stream<Path> files = Files.list(entitiesDir)) {
+            files.filter(p -> {
+                     String name = p.getFileName().toString();
+                     return name.endsWith(".md") && !name.startsWith("_");
+                 })
+                 .forEach(p -> {
+                     String filename = p.getFileName().toString();
+                     String canonical = filename.substring(0, filename.length() - 3);
+                     byName.put(canonical, canonical);
+                     Map<String, Object> page = readFile(p);
+                     if (page == null) return;
+                     Object aliases = page.get("aliases");
+                     if (!(aliases instanceof List<?> list)) return;
+                     for (Object alias : list) {
+                         if (alias == null) continue;
+                         String a = String.valueOf(alias).strip();
+                         // An alias never shadows a real page: two people can't share a name.
+                         if (!a.isEmpty()) byName.putIfAbsent(a, canonical);
+                     }
+                 });
+        } catch (IOException e) { /* no entities directory yet, no people to resolve against */ }
+        return byName;
+    }
+
     private static void addProject(Set<String> projects, Map<String, Object> item) {
         Object raw = item.get("project");
         if (raw == null) return;
@@ -305,7 +363,10 @@ public class VaultService {
     }
 
     public void patchMeta(String filename, Map<String, Object> meta, Actor actor) {
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "related_people", "area", "estimate_minutes", "confirmed", "project", "location", "priority");
+        // related/related_people are absent on purpose: both are derived from the body's
+        // wikilinks by deriveLinks(), so accepting them here would let a caller set a value the
+        // next save silently overwrites.
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "area", "estimate_minutes", "confirmed", "project", "location", "priority");
         mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             if ("area".equals(k)) {
@@ -313,7 +374,7 @@ public class VaultService {
                 if (area != null) item.put("area", area);
                 return;
             }
-            item.put(k, "related_people".equals(k) ? relatedPeopleAsList(v) : v);
+            item.put(k, v);
         }));
     }
 
@@ -557,19 +618,6 @@ public class VaultService {
         return created != null ? String.valueOf(created) : LocalDate.now().toString();
     }
 
-    /** Rewrites legacy scalar related_people ("Juan") as a single-element list (["Juan"]) on disk. */
-    private void migrateRelatedPeopleToList() {
-        forEachMarkdownFile(allDirs, "migrateRelatedPeopleToList", (dir, p) -> {
-            String content = Files.readString(p);
-            Map<String, Object> item = MarkdownSerializer.parse(content, p.getFileName().toString());
-            if (item.get("related_people") instanceof String) {
-                String body = (String) item.remove("body");
-                item.put("related_people", relatedPeopleAsList(item.get("related_people")));
-                Files.writeString(p, MarkdownSerializer.serialize(item, body));
-            }
-        });
-    }
-
     private void migrateTodaySince() {
         forEachMarkdownFile(List.of(todayDir), "migrateTodaySince", (dir, p) -> {
             String content = Files.readString(p);
@@ -752,6 +800,7 @@ public class VaultService {
             String newBody = (String) item.remove("_body_override");
             if (newBody == null) newBody = body;
 
+            deriveLinks(item, newBody);
             item.put("updated", LocalDate.now().toString());
             String newContent = MarkdownSerializer.serialize(item, newBody);
 
@@ -774,6 +823,199 @@ public class VaultService {
             throw new UncheckedIOException(e);
         } finally {
             lock.unlock();
+        }
+    }
+
+    /**
+     * Obsidian wikilink. Captures the target only, dropping an alias ("[[target|shown text]]") or
+     * a heading anchor ("[[target#section]]") — both are display concerns, the link still points
+     * at `target`.
+     */
+    private static final Pattern WIKILINK = Pattern.compile("\\[\\[([^\\[\\]|#]+)(?:[#|][^\\[\\]]*)?]]");
+
+    /** What a resolved [[wikilink]] points at, which decides who can open it. */
+    public enum LinkKind {
+        /** A note in one of the task buckets — the app opens it in its own modal. */
+        TASK,
+        /** A page in brain/entities/ — the app filters its task list by that person. */
+        PERSON,
+        /** Any other vault page: project, concept, session note. Only Obsidian renders these. */
+        NOTE
+    }
+
+    /**
+     * A vault page a wikilink resolved to: its canonical name, what kind it is, where it lives
+     * (relative to the vault), and the `obsidian://` URI that opens it in Obsidian.
+     *
+     * The URI is built here, not in the frontend, so no client ever has to know the vault's
+     * location or name — that lives in `gtd.vault.path` and nowhere else.
+     */
+    public record ResolvedLink(String name, LinkKind kind, String path, String obsidianUri) {}
+
+    /**
+     * `obsidian://open?path=<absolute path>`. The `path` form is used over `vault=<name>&file=`
+     * precisely because it needs no vault name: one configured value answers for everything.
+     *
+     * URLEncoder is form encoding, where a space is "+" — which Obsidian does not decode back to a
+     * space — so spaces are rewritten to %20 after the fact.
+     */
+    private String obsidianUri(Path base, Path file) {
+        String encoded = URLEncoder.encode(base.resolve(file).toString(), StandardCharsets.UTF_8)
+            .replace("+", "%20");
+        return "obsidian://open?path=" + encoded;
+    }
+
+    /**
+     * Rewrites `related_people` from the [[Name]] mentions in the body, which becomes the single
+     * place a person is ever named. It stays in the frontmatter because the waiting bucket, the
+     * frontend and Dataview all read it without parsing markdown, but nothing except this method
+     * writes it: patchMeta rejects it, and the classifier names the person in the body like a
+     * human would. That closes the hole that let the column fill up with several spellings and
+     * nicknames of the same person, plus values that were not people at all.
+     *
+     * `related` is deliberately NOT touched. It looks like the same kind of field but has a
+     * different owner: it's a vault-wide convention (415 notes, documented in the save,
+     * autoresearch, wiki-query and obsidian-markdown skills) holding *curated* cross-references,
+     * which are not the same set as the pages a body happens to mention — a wiki concept links to
+     * a related concept it never names in prose. Deriving it would make this service the author
+     * of a field it doesn't own and silently drop those curations on the next save. Body mentions
+     * are served live instead, as `links` on GET /api/items/{filename}.
+     */
+    private void deriveLinks(Map<String, Object> frontmatter, String body) {
+        frontmatter.remove("related_people");
+        if (body == null || body.isBlank()) return;
+
+        // Matched against the people pages alone, not the vault index: this runs on every write,
+        // with the lock held, and the only thing it keeps is the people. Resolving what the other
+        // links point at would be work thrown away.
+        Map<String, String> people = new LinkedHashMap<>();
+        peopleByName().forEach((name, canonical) -> people.put(TextNormalizer.normalize(name), canonical));
+
+        Set<String> found = new LinkedHashSet<>();
+        Matcher matcher = WIKILINK.matcher(body);
+        while (matcher.find()) {
+            String canonical = people.get(TextNormalizer.normalize(matcher.group(1).strip()));
+            if (canonical != null) found.add(canonical);
+        }
+        if (!found.isEmpty()) frontmatter.put("related_people", new ArrayList<>(found));
+    }
+
+    /**
+     * Every [[wikilink]] in a body that names a real vault page, in order, deduplicated. Used both
+     * to derive the frontmatter fields and to answer the frontend, which needs the path to hand a
+     * NOTE off to Obsidian via its obsidian:// URI.
+     */
+    public List<ResolvedLink> resolveLinks(String body) {
+        if (body == null || body.isBlank()) return List.of();
+        Map<String, ResolvedLink> index = vaultIndex();
+        Map<String, ResolvedLink> found = new LinkedHashMap<>();
+        Matcher matcher = WIKILINK.matcher(body);
+        while (matcher.find()) {
+            String target = matcher.group(1).strip();
+            if (target.endsWith(".md")) target = target.substring(0, target.length() - 3);
+            if (target.isEmpty()) continue;
+            ResolvedLink link = index.get(TextNormalizer.normalize(target));
+            if (link != null) found.putIfAbsent(link.name(), withSettledKind(link));
+        }
+        return new ArrayList<>(found.values());
+    }
+
+    /**
+     * Upgrades a NOTE to a TASK when the page really is one. The bucket folder alone doesn't prove
+     * it: brain/resources/ is the `reference` bucket, but 89 of its 96 pages are session notes
+     * written by /save, which have no `bucket` field and would open in the task modal as if they
+     * were cards. Having the field is what makes a page a task, so that is what gets checked.
+     *
+     * One read per link in a body, typically none or two — the cost the index deliberately avoids
+     * paying 661 times per save.
+     */
+    private ResolvedLink withSettledKind(ResolvedLink link) {
+        if (link.kind() != LinkKind.NOTE) return link;
+        Path file = Path.of(vaultPath).toAbsolutePath().normalize().resolve(link.path());
+        if (!allDirs.contains(file.getParent())) return link;
+        Map<String, Object> page = readFile(file);
+        return (page != null && page.get("bucket") != null)
+            ? new ResolvedLink(link.name(), LinkKind.TASK, link.path(), link.obsidianUri())
+            : link;
+    }
+
+    /**
+     * The two zones that hold linkable pages: wiki/ for external knowledge, brain/ for personal
+     * notes. Scoping the walk to them is not an optimization, it's what makes the index correct —
+     * the vault root also contains the workspace/ checkouts, whose READMEs and node_modules would
+     * otherwise register as vault pages and answer to a [[README]] mention. It cuts the walk from
+     * ~71k filesystem entries to ~660 at the same time.
+     */
+    private static final List<String> LINKABLE_ZONES = List.of("wiki", "brain");
+
+    /** Superseded duplicates live on under brain/ but are not link targets. */
+    private static final String ARCHIVE_DIR = ".archive";
+
+    /**
+     * Name → page index over the linkable zones, keyed by normalized name so a mention matches
+     * regardless of case or accents ("[[jane-doe]]" finds "Jane-Doe.md").
+     *
+     * ponytail: rebuilt per call, ~660 paths with no file reads, and only on the read path —
+     * writes match against the people pages alone (see deriveLinks). Cache it against the
+     * directory mtimes if a read ever feels slow.
+     */
+    /**
+     * Every page a [[wikilink]] could name, for the editor's autocomplete: tasks in any bucket
+     * (done and discarded included — linking to a finished task is how a card says where it came
+     * from), people, and the wiki/brain notes. Sorted by name.
+     *
+     * Aliases are left out: they resolve, but offering both a person's name and their nickname as
+     * two entries would read as two people. The canonical name is what gets inserted anyway.
+     */
+    public List<ResolvedLink> vaultPages() {
+        Path base = Path.of(vaultPath).toAbsolutePath().normalize();
+        Map<String, ResolvedLink> index = new LinkedHashMap<>();
+        for (String zone : LINKABLE_ZONES) indexZone(base, base.resolve(zone), index);
+        return index.values().stream()
+            .sorted(Comparator.comparing(ResolvedLink::name, String.CASE_INSENSITIVE_ORDER))
+            .toList();
+    }
+
+    private Map<String, ResolvedLink> vaultIndex() {
+        Path base = Path.of(vaultPath).toAbsolutePath().normalize();
+        Map<String, ResolvedLink> index = new LinkedHashMap<>();
+        for (String zone : LINKABLE_ZONES) indexZone(base, base.resolve(zone), index);
+        // Person aliases last, and only into free slots: a nickname reaches its person's page,
+        // but a real page owning that name already claimed the key and keeps it.
+        peopleByName().forEach((name, canonical) -> {
+            ResolvedLink target = index.get(TextNormalizer.normalize(canonical));
+            if (target != null) index.putIfAbsent(TextNormalizer.normalize(name), target);
+        });
+        return index;
+    }
+
+    private void indexZone(Path base, Path zone, Map<String, ResolvedLink> index) {
+        try (Stream<Path> files = Files.walk(zone)) {
+            files.filter(p -> p.toString().endsWith(".md"))
+                 .filter(p -> !base.relativize(p).startsWith(Path.of("brain", ARCHIVE_DIR))
+                           && !p.getParent().getFileName().toString().equals(ARCHIVE_DIR))
+                 .forEach(p -> {
+                     String filename = p.getFileName().toString();
+                     String name = filename.substring(0, filename.length() - 3);
+                     if (name.startsWith("_")) return;   // _index and friends are not link targets
+                     // Kind by directory, which settles it for every folder but one: entities are
+                     // people, and the six single-purpose bucket folders hold nothing but tasks.
+                     // brain/resources/ is the exception — it is the `reference` bucket, yet 89 of
+                     // its 96 pages are session notes — so it starts as NOTE and only a link that
+                     // actually gets resolved pays a read to check (see withSettledKind).
+                     Path parent = p.getParent();
+                     LinkKind kind = parent.equals(entitiesDir) ? LinkKind.PERSON
+                                   : allDirs.contains(parent) && !parent.equals(resourcesDir) ? LinkKind.TASK
+                                   : LinkKind.NOTE;
+                     // First writer wins: two pages sharing a name is an Obsidian ambiguity we
+                     // don't try to out-guess, and stable order beats a coin flip per read.
+                     Path relative = base.relativize(p);
+                     index.putIfAbsent(TextNormalizer.normalize(name),
+                         new ResolvedLink(name, kind, relative.toString().replace('\\', '/'),
+                             obsidianUri(base, relative)));
+                 });
+        } catch (IOException e) {
+            log.warn("indexZone: could not walk {}, its links will not resolve this pass: {}", zone, e.getMessage());
         }
     }
 
@@ -805,21 +1047,6 @@ public class VaultService {
         return (raw instanceof List<?>) ? new ArrayList<>((List<String>) raw) : new ArrayList<>();
     }
 
-    /**
-     * Normalizes related_people to a List<String> regardless of whether the caller sent a list
-     * (frontend, new format) or a bare string (legacy data, old classifier output) — never both
-     * shapes coexist past this point.
-     */
-    private static List<String> relatedPeopleAsList(Object raw) {
-        if (raw instanceof List<?> list) {
-            return list.stream().filter(Objects::nonNull).map(String::valueOf).map(String::strip)
-                .filter(s -> !s.isBlank()).distinct().toList();
-        }
-        if (raw instanceof String s && !s.isBlank()) {
-            return List.of(s.strip());
-        }
-        return List.of();
-    }
 
     /** The configured `gtd.areas` vocabulary, in config order — served to the frontend and the classifier prompt. */
     public List<String> validAreas() {

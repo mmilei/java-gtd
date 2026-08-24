@@ -2,7 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [master]
+    # develop is where day-to-day work lands; master gets it in batches. Both are gated —
+    # a PR into develop that skipped CI would be an untested merge by default.
+    branches: [master, develop]
 
 jobs:
   test:
@@ -16,7 +18,7 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Build y tests
+      - name: Build and tests
         run: mvn verify -Dnet.bytebuddy.experimental=true
         env:
           GROQ_API_KEY: dummy-not-needed-in-tests

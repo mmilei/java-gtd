@@ -72,12 +72,26 @@ class ItemCreateFieldsTest {
     }
 
     @Test
+    void linkFieldsCannotBeSetByHandEither(@TempDir Path tempDir) throws Exception {
+        MockMvc mvc = mvcOver(tempDir);
+
+        // related/related_people are derived from the body's wikilinks on the way in. Accepting
+        // them here would store a value the first body edit silently overwrites.
+        postItem(mvc, """
+            {"bucket":"backlog","title":"Call the plumber",
+             "related_people":["Ana"],"related":["something.md"]}
+            """);
+
+        assertThat(onlyNoteIn(tempDir, "backlog")).doesNotContainKeys("related_people", "related");
+    }
+
+    @Test
     void everyAllowedFieldStillLands(@TempDir Path tempDir) throws Exception {
         MockMvc mvc = mvcOver(tempDir);
 
         postItem(mvc, """
             {"bucket":"backlog","title":"Buy paint","body":"Two litres, matte white.",
-             "tags":["home","shopping"],"related_people":"Ana","due":"2026-09-01",
+             "tags":["home","shopping"],"due":"2026-09-01",
              "area":"hogar","project":"repaint-kitchen","location":"hardware store",
              "estimate_minutes":45,"priority":"high"}
             """);
@@ -94,7 +108,6 @@ class ItemCreateFieldsTest {
             .containsEntry("priority", "high")
             .containsEntry("body", "Two litres, matte white.");
         assertThat(note.get("tags")).asInstanceOf(LIST).contains("home", "shopping");
-        assertThat(note.get("related_people")).asInstanceOf(LIST).contains("Ana");
     }
 
     @Test

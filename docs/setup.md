@@ -33,7 +33,7 @@ All settings live in `application.properties` and can be overridden per-machine 
 | `anthropic.enabled` | off | Set `true` to register the Anthropic (Claude) provider |
 | `spring.ai.anthropic.api-key` | `$ANTHROPIC_API_KEY` | Anthropic key |
 | `spring.ai.anthropic.chat.options.model` | `claude-sonnet-5` | Anthropic model |
-| `gtd.vault.migrations-enabled` | `true` | Startup self-healing migrations on the vault (today_since, timestamps, bucket mismatches, related_people list, one-time folder-per-bucket split) |
+| `gtd.vault.migrations-enabled` | `true` | Startup self-healing migrations on the vault (today_since, timestamps, bucket mismatches, one-time folder-per-bucket split) |
 
 Example `application-local.properties`:
 

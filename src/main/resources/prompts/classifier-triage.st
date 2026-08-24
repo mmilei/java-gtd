@@ -17,7 +17,7 @@ Is it a concrete action someone can do?
   YES → Can it be done in under 2 minutes?
     YES → now (not archived, do it immediately)
     NO → Does someone else need to do it?
-      YES → waiting (populate related_people)
+      YES → waiting (name that person in the body as [[Name]])
       NO → Did the user explicitly say "today", "now", "urgent", "this morning", "this afternoon", or mention today's date {today}?
         YES → today
         NO → backlog  ← DEFAULT for all new tasks
@@ -25,8 +25,9 @@ Is it a concrete action someone can do?
 ## Available operations
 
 1. "create" — new task
-   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), related_people (null or array of names), confirmed (true/false — see rule below), message (only for now/discard)
-   Only these fields. Do NOT emit tags, area, project, location, or estimate_minutes — a separate enrichment step fills those in afterwards from the title/body/bucket you settle here. Your job is the bucket, the title, the body, and how confident you are.
+   Fields: op, bucket, title, body, due (YYYY-MM-DD or null), confirmed (true/false — see rule below), message (only for now/discard)
+   related people: when the message involves another person, do NOT emit a field for them — write them into the body as an Obsidian wikilink, [[Name]]. Use the EXACT name from this list: {known_people}. If the person isn't on that list, write their name as plain text, no brackets — a bracketed name that matches no page resolves to nothing and the mention is lost.
+   Only these fields. Do NOT emit tags, area, project, location, related_people, or estimate_minutes — a separate enrichment step fills those in afterwards from the title/body/bucket you settle here. Your job is the bucket, the title, the body, and how confident you are.
    body: ACTIVELY capture the detail the message carries beyond its title — the "why", the who/where/what specifics, constraints, amounts, names, deadlines context, or anything the user would want to remember when they open this task later. Distill it in your own words (NOT the raw message copied verbatim), one or two short sentences. Do NOT just restate the title. Leave it "" ONLY when the message is a genuinely bare title with zero extra detail ("buy bread", "go to the gym"). If the message has ANY context past the bare action, that context belongs in the body — a message like "call the plumber, the kitchen sink is leaking again" MUST put "The kitchen sink is leaking again" in the body, not drop it.
    confirmed: true if you are confident about the bucket you chose; false if you hesitate between 2+ buckets, or the message is genuinely ambiguous about what to concretely do (e.g. the user says they don't know how to tackle something, or describes a problem without a clear next action). At the SLIGHTEST classification doubt → confirmed:false — it's cheap, it queues the task for a quick human review instead of filing it wrong. This field applies ONLY to "create" ops that get filed (any bucket except now/discard). Do NOT use confirmed for gibberish — that goes to discard, which never carries confirmed. When you're clearly sure (a plain, unambiguous task like "buy bread") → confirmed:true.
 
@@ -58,6 +59,7 @@ Is it a concrete action someone can do?
      known tags: {known_tags}
      known projects: {known_projects}
      valid areas (area MUST be one of these, or null): {valid_areas}
+     known people (for [[Name]] mentions in a body): {known_people}
 
 ## Critical rules
 - DEFAULT: backlog — but ONLY for messages with real semantic content. Only use "today" if the user states it explicitly (see decision tree above).
@@ -75,14 +77,14 @@ Is it a concrete action someone can do?
 - Never guess on destructive operations (edit, dismiss). A false positive on "create" is harmless; a false positive on "edit" overwrites data.
 
 ## Examples
-- "buy bread" → [{"op":"create","bucket":"backlog","title":"Buy bread","body":"","due":null,"related_people":null,"confirmed":true}]
-- "buy bread for today" → [{"op":"create","bucket":"today","title":"Buy bread","body":"","due":null,"related_people":null,"confirmed":true}]
-- "someday learn piano" → [{"op":"create","bucket":"someday","title":"Learn piano","body":"","due":null,"related_people":null,"confirmed":true}]
-- "fix the tab bug in the gtd-frontend tags" → [{"op":"create","bucket":"backlog","title":"Fix tab bug in the tags","body":"","due":null,"related_people":null,"confirmed":true}]
-- "meet up with Tuli for coffee, she wants to talk about the trip" → [{"op":"create","bucket":"backlog","title":"Meet up with Tuli","body":"She wants to talk about the trip","due":null,"related_people":null,"confirmed":true}]
-- "ask my brother to pick up the package" → [{"op":"create","bucket":"waiting","title":"Package pickup","body":"","due":null,"related_people":["brother"],"confirmed":true}]
-- "I need to sort out the whole rent situation, not sure how to even approach it" → [{"op":"create","bucket":"backlog","title":"Sort out the rent situation","body":"Not sure how to approach it yet","due":null,"related_people":null,"confirmed":false}]
-- "there's the thing with my sister, I should do something about it eventually" → [{"op":"create","bucket":"someday","title":"The thing with my sister","body":"Should do something about it eventually","due":null,"related_people":null,"confirmed":false}]
+- "buy bread" → [{"op":"create","bucket":"backlog","title":"Buy bread","body":"","due":null,"confirmed":true}]
+- "buy bread for today" → [{"op":"create","bucket":"today","title":"Buy bread","body":"","due":null,"confirmed":true}]
+- "someday learn piano" → [{"op":"create","bucket":"someday","title":"Learn piano","body":"","due":null,"confirmed":true}]
+- "fix the tab bug in the gtd-frontend tags" → [{"op":"create","bucket":"backlog","title":"Fix tab bug in the tags","body":"","due":null,"confirmed":true}]
+- "meet up with Tuli for coffee, she wants to talk about the trip" → [{"op":"create","bucket":"backlog","title":"Meet up with Tuli","body":"[[Tuli]] wants to talk about the trip","due":null,"confirmed":true}]
+- "ask my brother to pick up the package" → [{"op":"create","bucket":"waiting","title":"Package pickup","body":"Waiting on my brother to pick it up.","due":null,"confirmed":true}]
+- "I need to sort out the whole rent situation, not sure how to even approach it" → [{"op":"create","bucket":"backlog","title":"Sort out the rent situation","body":"Not sure how to approach it yet","due":null,"confirmed":false}]
+- "there's the thing with my sister, I should do something about it eventually" → [{"op":"create","bucket":"someday","title":"The thing with my sister","body":"Should do something about it eventually","due":null,"confirmed":false}]
 - open tasks include {"file":"20260601-1-buy-bread.md","title":"Buy bread","bucket":"backlog"}; message "mark buy bread as done" → [{"op":"done","target_title":"Buy bread"}]
 - open tasks include {"file":"20260601-2-old-idea.md","title":"Old idea","bucket":"someday"}; message "discard the old idea task" → [{"op":"dismiss","target_title":"Old idea"}]
 - "asd" → [{"op":"create","bucket":"discard","title":"asd","message":"Doesn't look like a real message — discarding."}]

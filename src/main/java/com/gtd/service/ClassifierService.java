@@ -115,12 +115,15 @@ public class ClassifierService {
         String knownProjects = formatCsvOrNoneYet(vault.knownProjects());
         String knownTags = formatCsvOrNoneYet(vault.knownTags());
         String validAreas = String.join(", ", vault.validAreas());
+        // Same freshness reasoning, and load-bearing here: a person the classifier can't name
+        // exactly won't resolve to their page, and the mention is dropped instead of guessed.
+        String knownPeople = formatCsvOrNoneYet(vault.knownPeople());
 
         List<Map<String, Object>> ops = null;
         boolean usedFallback = false;
 
         // Level 1
-        String level1 = buildPrompt(promptTemplate, today, userContext, openTasksJson, knownProjects, knownTags, validAreas, message);
+        String level1 = buildPrompt(promptTemplate, today, userContext, openTasksJson, knownProjects, knownTags, validAreas, knownPeople, message);
         String response1 = call(LlmAction.TRIAGE, level1);
         try {
             ops = parseJsonList(response1);
@@ -130,7 +133,7 @@ public class ClassifierService {
 
         if (ops == null || allNonFiling(ops)) {
             // Level 2
-            String level2 = buildPrompt(fallbackTemplate, today, userContext, openTasksJson, knownProjects, knownTags, validAreas, message);
+            String level2 = buildPrompt(fallbackTemplate, today, userContext, openTasksJson, knownProjects, knownTags, validAreas, knownPeople, message);
             String response2 = call(LlmAction.TRIAGE, level2);
             try {
                 ops = parseJsonList(response2);
@@ -308,7 +311,7 @@ public class ClassifierService {
      */
     static String buildPrompt(String template, String today, String userContext,
                               String openTasksJson, String knownProjects, String knownTags,
-                              String validAreas, String message) {
+                              String validAreas, String knownPeople, String message) {
         return template
             .replace("{today}", today)
             .replace("{user_context}", userContext)
@@ -316,6 +319,7 @@ public class ClassifierService {
             .replace("{known_projects}", knownProjects)
             .replace("{known_tags}", knownTags)
             .replace("{valid_areas}", validAreas)
+            .replace("{known_people}", knownPeople)
             .replace("{message}", message);
     }
 

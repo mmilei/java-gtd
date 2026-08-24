@@ -2,7 +2,7 @@
 
 # API reference
 
-REST API that classifies natural language into GTD buckets and files the results as Markdown notes in an Obsidian vault. 25 endpoints, all under `/api`.
+REST API that classifies natural language into GTD buckets and files the results as Markdown notes in an Obsidian vault. 28 endpoints, all under `/api`.
 
 ## The chat endpoint
 
@@ -80,9 +80,10 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 | `GET` | `/api/buckets` | All open items grouped by bucket |
 | `GET` | `/api/buckets/{bucket}` | Open items in one bucket |
 | `GET` | `/api/today` | Open items in *today* |
-| `GET` | `/api/items/{filename}` | Single item (frontmatter + body) |
+| `GET` | `/api/items/{filename}` | Single item (frontmatter + body), plus `links`: every `[[wikilink]]` in the body that resolves to a real vault page, as `{ name, kind, path }` where kind is `TASK` \| `PERSON` \| `NOTE` |
 | `GET` | `/api/tags` | Unique tags with per-bucket counts |
 | `GET` | `/api/areas` | The configured `area` vocabulary (`gtd.areas`), in config order |
+| `GET` | `/api/people` | Known people, one page per name in `brain/entities/` — the vocabulary `[[Name]]` mentions resolve against |
 | `GET` | `/api/stats` | Item counts per bucket plus total |
 | `GET` | `/api/history` | Recently completed/dismissed items, read straight from `brain/done`/`brain/discard` — `?limit=N` (default 20) |
 | `GET` | `/api/review` | Weekly review data — `staleDays` (3), `dueDays` (7), `completedDays` (7). Returns `{ stale_today, due_this_week, completed_this_week, week_stats }` |
@@ -97,7 +98,7 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 | `POST` | `/api/items/{filename}/dismiss` | Discard (decided not to do it), move to `brain/discard/` |
 | `POST` | `/api/items/{filename}/move` | Reclassify — `{ "bucket": "...", "due": "YYYY-MM-DD" }` |
 | `PUT` | `/api/items/{filename}/body` | Replace body — `{ "body": "..." }` |
-| `PUT` | `/api/items/{filename}/meta` | Update metadata — any of `title`, `tags`, `due`, `today_since`, `related_people`, `area`, `estimate_minutes`, `confirmed`, `project`, `location` |
+| `PUT` | `/api/items/{filename}/meta` | Update metadata — any of `title`, `tags`, `due`, `today_since`, `area`, `estimate_minutes`, `confirmed`, `project`, `location`, `priority`. Not `related_people`: it is derived from the body's `[[Name]]` mentions on every write |
 | `POST` | `/api/items/{filename}/confirm` | Flip a low-confidence task's `confirmed: false` → `true` after review |
 | `POST` | `/api/undo` | Undo the most recent mutation, durable and restart-safe (`EventLog`-backed, cap 50) |
 
