@@ -1268,6 +1268,36 @@ class VaultServiceTest {
     }
 
     @Test
+    void resolveLinksShouldResolveAFolderQualifiedMentionByBasename(@TempDir Path tempDir) throws Exception {
+        // The vault's own convention writes some mentions with the folder spelled out
+        // ("[[wiki/references/some-note]]") to disambiguate at a glance — the index is keyed by
+        // basename, so the lookup has to strip that prefix the same way indexZone built the key.
+        Files.createDirectories(tempDir.resolve("wiki/references"));
+        Files.writeString(tempDir.resolve("wiki/references/some-note.md"), "---\ntype: reference\n---\n");
+        VaultService vault = newVault(tempDir);
+
+        var bare = vault.resolveLinks("See [[some-note]].");
+        var qualified = vault.resolveLinks("See [[wiki/references/some-note]].");
+
+        assertThat(qualified).extracting(VaultService.ResolvedLink::path).containsExactly("wiki/references/some-note.md");
+        assertThat(qualified).isEqualTo(bare);
+    }
+
+    @Test
+    void deriveLinksShouldMatchAFolderQualifiedPersonMention(@TempDir Path tempDir) throws Exception {
+        givenPerson(tempDir, "Ana");
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> task = new java.util.LinkedHashMap<>();
+        task.put("bucket", "backlog");
+        task.put("title", "Call Ana");
+        task.put("body", "Follow up with [[brain/entities/Ana]].");
+        String filename = vault.write(task, Actor.USER);
+
+        assertThat(vault.read(filename).get("related_people")).asInstanceOf(LIST).containsExactly("Ana");
+    }
+
+    @Test
     void resolveLinksShouldSkipTheVaultsNonLinkableCorners(@TempDir Path tempDir) throws Exception {
         Files.createDirectories(tempDir.resolve(".obsidian"));
         Files.writeString(tempDir.resolve(".obsidian/workspace.md"), "internal");

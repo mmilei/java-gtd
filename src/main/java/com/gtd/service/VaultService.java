@@ -1015,7 +1015,7 @@ public class VaultService {
         Set<String> found = new LinkedHashSet<>();
         Matcher matcher = WIKILINK.matcher(body);
         while (matcher.find()) {
-            String canonical = people.get(TextNormalizer.normalize(matcher.group(1).strip()));
+            String canonical = people.get(TextNormalizer.normalize(wikilinkKey(matcher.group(1))));
             if (canonical != null) found.add(canonical);
         }
         if (!found.isEmpty()) frontmatter.put("related_people", new ArrayList<>(found));
@@ -1026,16 +1026,27 @@ public class VaultService {
      * to derive the frontmatter fields and to answer the frontend, which needs the path to hand a
      * NOTE off to Obsidian via its obsidian:// URI.
      */
+    /**
+     * The lookup key for a raw `[[...]]` target: strips a trailing ".md" and any folder prefix, so
+     * both a bare "[[Some Note]]" and a folder-qualified "[[wiki/references/some-note]]" resolve
+     * the same way the vault's own index and Obsidian itself do — by basename, not full path.
+     */
+    private static String wikilinkKey(String rawTarget) {
+        String target = rawTarget.strip();
+        if (target.endsWith(".md")) target = target.substring(0, target.length() - 3);
+        int slash = target.lastIndexOf('/');
+        return slash >= 0 ? target.substring(slash + 1) : target;
+    }
+
     public List<ResolvedLink> resolveLinks(String body) {
         if (body == null || body.isBlank()) return List.of();
         Map<String, ResolvedLink> index = vaultIndex();
         Map<String, ResolvedLink> found = new LinkedHashMap<>();
         Matcher matcher = WIKILINK.matcher(body);
         while (matcher.find()) {
-            String target = matcher.group(1).strip();
-            if (target.endsWith(".md")) target = target.substring(0, target.length() - 3);
-            if (target.isEmpty()) continue;
-            ResolvedLink link = index.get(TextNormalizer.normalize(target));
+            String key = wikilinkKey(matcher.group(1));
+            if (key.isEmpty()) continue;
+            ResolvedLink link = index.get(TextNormalizer.normalize(key));
             if (link != null) found.putIfAbsent(link.name(), withSettledKind(link));
         }
         return new ArrayList<>(found.values());
