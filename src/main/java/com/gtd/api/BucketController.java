@@ -58,13 +58,18 @@ public class BucketController {
 
     /**
      * The people the vault knows, one page per person in brain/entities/ — the source for the
-     * editor's `@` autocomplete. Same {@code ResolvedLink} shape as {@link #pages()} (a subset of
-     * it, in fact) so the frontend's `VaultPage` type covers both without a second contract.
+     * editor's `@` autocomplete. Same {@code ResolvedLink} shape as {@link #pages()} so the
+     * frontend's `VaultPage` type covers both without a second contract, but built from the cheap
+     * entities-only listing rather than routing through {@code vaultPages()}'s full wiki/+brain/
+     * walk (~660 paths) — this endpoint feeds live autocomplete, `pages()` is fetched once per
+     * editor mount. Neither `path` nor `obsidianUri` is meaningful for a person page today, so both
+     * come back blank; nothing on the frontend reads them for a PERSON entry (people navigate by
+     * name via the in-app `/persona/<name>` facet, never through Obsidian's URI scheme).
      */
     @GetMapping("/people")
     public List<VaultService.ResolvedLink> people() {
-        return vault.vaultPages().stream()
-            .filter(link -> link.kind() == VaultService.LinkKind.PERSON)
+        return vault.knownPeople().stream()
+            .map(name -> new VaultService.ResolvedLink(name, VaultService.LinkKind.PERSON, "", ""))
             .toList();
     }
 

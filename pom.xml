@@ -84,12 +84,18 @@
                         </goals>
                         <configuration>
                             <propertyName>jacocoArgLine</propertyName>
-                            <!-- ponytail: JDK 26's java.net.http preview classes trip JaCoCo 0.8.12's
-                                 bytecode reader (class file major version 70) — excluded since this
-                                 project only ever calls into that package, never covers it. -->
-                            <excludes>
-                                <exclude>java/net/http/**</exclude>
-                            </excludes>
+                            <!-- ponytail: this project compiles to Java 21 (java.version above), but
+                                 runs on JDK 26 — JaCoCo 0.8.12 can't parse class file major version
+                                 70, and that isn't limited to one package: any JDK-internal class
+                                 loaded lazily at runtime (security providers, java.sql, jshell) or
+                                 generated dynamically (Mockito's mock classes) is version 70 too and
+                                 trips the same crash. An excludes list chasing each one is unbounded;
+                                 scoping the agent to our own package is the actual fix, and is also
+                                 what we want coverage numbers for regardless. Remove once
+                                 jacoco-maven-plugin ships a release with class-file-70 support. -->
+                            <includes>
+                                <include>com/gtd/**</include>
+                            </includes>
                         </configuration>
                     </execution>
                     <execution>

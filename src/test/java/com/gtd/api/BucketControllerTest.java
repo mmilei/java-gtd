@@ -76,6 +76,19 @@ class BucketControllerTest {
     }
 
     @Test
+    void peopleReturnsResolvedLinksBuiltFromKnownPeople() throws Exception {
+        // Built from knownPeople(), not vaultPages() — that's the cheap entities-only list (and the
+        // one that includes aliases as their own entries), not a full wiki/+brain/ walk.
+        when(vault.knownPeople()).thenReturn(List.of("Ana", "Annie"));
+        mvc.perform(get("/api/people"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Ana"))
+                .andExpect(jsonPath("$[0].kind").value("PERSON"))
+                .andExpect(jsonPath("$[0].path").value(""))
+                .andExpect(jsonPath("$[1].name").value("Annie"));
+    }
+
+    @Test
     void areasReturnsConfiguredVocabularyInOrder() throws Exception {
         when(vault.validAreas()).thenReturn(List.of("personal", "friends", "exercise"));
         mvc.perform(get("/api/areas"))

@@ -1230,6 +1230,20 @@ class VaultServiceTest {
             .hasMessageContaining("Invalid person name");
     }
 
+    @Test
+    void createPersonShouldRejectAWindowsReservedDeviceName(@TempDir Path tempDir) {
+        // Case-insensitive and regardless of extension: Windows treats "con", "CON", and "Con.md"
+        // identically, and a write that got past this check would fail as an unhandled IOException
+        // instead of the clean 400 every other rejection here produces.
+        VaultService vault = newVault(tempDir);
+        assertThatThrownBy(() -> vault.createPerson("con"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid person name");
+        assertThatThrownBy(() -> vault.createPerson("LPT1"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid person name");
+    }
+
         @Test
     void shouldFollowAnAliasedWikilinkToItsTarget(@TempDir Path tempDir) throws Exception {
         // "[[Ana|Annie]]" reads as Annie but points at Ana — the alias is how the migration
@@ -1479,6 +1493,21 @@ class VaultServiceTest {
         vault.patchMeta(blocked, Map.of("depends_on", List.of(blocker)), Actor.USER);
 
         assertThat(vault.read(blocked).get("depends_on")).asInstanceOf(LIST).containsExactly(blocker);
+    }
+
+    @Test
+    void dependsOnRejectsATaskNamingItself(@TempDir Path tempDir) throws Exception {
+        // The trivial 1-node case of the cycle detection this class otherwise deliberately skips:
+        // findFile() succeeds (the file is already on disk), so without this check patchMeta would
+        // accept it, and the task would report itself as an open dependency every time it's closed.
+        VaultService vault = newVault(tempDir);
+        String self = task(vault, "Lay the tiles");
+
+        assertThatThrownBy(() -> vault.patchMeta(self, Map.of("depends_on", List.of(self)), Actor.USER))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("depends_on")
+            .hasMessageContaining("itself");
+        assertThat(vault.read(self)).doesNotContainKey("depends_on");
     }
 
     @Test

@@ -275,10 +275,16 @@ public class VaultService {
     }
 
     // Anything that would make the name something other than a plain file name in brain/entities/:
-    // path separators, the Windows-reserved set, control characters. A leading dot is out too, which
-    // also settles "." and "..".
+    // path separators, control characters. A leading dot is out too, which also settles "." and "..".
     private static final Pattern UNSAFE_PERSON_NAME = Pattern.compile("[\\\\/:*?\"<>|\\p{Cntrl}]");
     private static final int MAX_PERSON_NAME = 100;
+    // Windows treats these as device names regardless of extension or case — "CON.md" is just as
+    // unwritable as "CON" — so the check runs on the stem, not the raw (dot-free) name UNSAFE_PERSON_NAME
+    // already validated.
+    private static final Set<String> RESERVED_WINDOWS_NAMES = Set.of(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9");
 
     /**
      * Creates a person page in brain/entities/ with the minimal frontmatter knownPeople() and
@@ -297,6 +303,10 @@ public class VaultService {
         String name = rawName == null ? "" : rawName.strip();
         if (name.isEmpty()) throw new IllegalArgumentException("name is required");
         if (name.length() > MAX_PERSON_NAME || name.startsWith(".") || UNSAFE_PERSON_NAME.matcher(name).find()) {
+            throw new IllegalArgumentException("Invalid person name: " + name);
+        }
+        String stem = name.contains(".") ? name.substring(0, name.indexOf('.')) : name;
+        if (RESERVED_WINDOWS_NAMES.contains(stem.toUpperCase(Locale.ROOT))) {
             throw new IllegalArgumentException("Invalid person name: " + name);
         }
 
@@ -490,8 +500,14 @@ public class VaultService {
             }
             if ("depends_on".equals(k)) {
                 // Throws before anything is written when an entry names a file the vault doesn't
-                // have. An empty list drops the key instead of leaving `depends_on: []` behind.
+                // have, or names this same file — the trivial 1-node case of the cycle detection
+                // this class otherwise deliberately skips (see validateDependsOn). Unlike a longer
+                // cycle, a task depending on itself is cheap to catch here and would otherwise
+                // report itself as an open dependency on every close, forever.
                 List<String> deps = validateDependsOn(v);
+                if (deps.contains(filename)) {
+                    throw new IllegalArgumentException("depends_on: a task cannot depend on itself: " + filename);
+                }
                 if (deps.isEmpty()) item.remove("depends_on"); else item.put("depends_on", deps);
                 return;
             }

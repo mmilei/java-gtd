@@ -83,7 +83,8 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 | `GET` | `/api/items/{filename}` | Single item (frontmatter + body), plus `links`: every `[[wikilink]]` in the body that resolves to a real vault page, as `{ name, kind, path }` where kind is `TASK` \| `PERSON` \| `NOTE` |
 | `GET` | `/api/tags` | Unique tags with per-bucket counts |
 | `GET` | `/api/areas` | The configured `area` vocabulary (`gtd.areas`), in config order |
-| `GET` | `/api/people` | Known people, one page per name in `brain/entities/` — the vocabulary `[[Name]]` mentions resolve against |
+| `GET` | `/api/people` | Known people, one entry per page in `brain/entities/` — the vocabulary `[[Name]]` mentions resolve against. Returns `[{ name, kind: "PERSON", path: "", obsidianUri: "" }]`; `path`/`obsidianUri` are always blank, a person is addressed by name, not by vault location |
+| `GET` | `/api/pages` | Every vault page (task, person, or note) the editor's `[[` autocomplete can link to, as `{ name, kind, path, obsidianUri }` |
 | `GET` | `/api/stats` | Item counts per bucket plus total |
 | `GET` | `/api/history` | Recently completed/dismissed items, read straight from `brain/done`/`brain/discard` — `?limit=N` (default 20) |
 | `GET` | `/api/review` | Weekly review data — `staleDays` (3), `dueDays` (7), `completedDays` (7). Returns `{ stale_today, due_this_week, completed_this_week, week_stats }` |
@@ -101,6 +102,7 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 | `PUT` | `/api/items/{filename}/meta` | Update metadata — any of `title`, `tags`, `due`, `today_since`, `area`, `estimate_minutes`, `confirmed`, `project`, `location`, `priority`, `depends_on`. Not `related_people`: it is derived from the body's `[[Name]]` mentions on every write |
 | `POST` | `/api/items/{filename}/confirm` | Flip a low-confidence task's `confirmed: false` → `true` after review |
 | `POST` | `/api/undo` | Undo the most recent mutation, durable and restart-safe (`EventLog`-backed, cap 50) |
+| `POST` | `/api/people` | Create a person page in `brain/entities/` — `{ "name": "..." }`. `400` on a blank or already-existing name (case/alias-insensitive). Returns `{ created: true, name }` |
 
 ## Item shape
 
@@ -120,7 +122,7 @@ This is distinct from the generic `PUT /api/items/{file}/body` and `POST /api/it
 }
 ```
 
-`depends_on` is an optional list of filenames of other tasks this one waits on. Every entry is checked against the vault when it is written (an unknown filename is a `400`), and nothing is revalidated afterwards: dead references and cycles are out of scope. It never blocks anything — closing a task with unfinished dependencies succeeds and reports them, see `POST /api/items/{filename}/done`.
+`depends_on` is an optional list of filenames of other tasks this one waits on. Every entry is checked against the vault when it is written (an unknown filename or the task's own filename is a `400`), and nothing is revalidated afterwards: dead references and multi-task cycles are out of scope. It never blocks anything — closing a task with unfinished dependencies succeeds and reports them, see `POST /api/items/{filename}/done`. To clear it, send `"depends_on": []` — like every other field on `PUT .../meta`, `null` is treated as "not included in this patch" and leaves the existing value untouched.
 
 Once a task is completed or dismissed, `status` becomes `done`/`dismissed`, the file moves to `brain/done/`/`brain/discard/`, and a write-once `done_date`/`discarded_date` is added (never overwritten by later edits). `confirmed: false` appears only on tasks the classifier filed with low confidence — its absence, `true`, or `null` all mean confirmed.
 
