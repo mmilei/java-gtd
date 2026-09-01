@@ -70,8 +70,42 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                    <argLine>@{jacocoArgLine} -Dnet.bytebuddy.experimental=true</argLine>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                        <configuration>
+                            <propertyName>jacocoArgLine</propertyName>
+                            <!-- ponytail: this project compiles to Java 21 (java.version above), but
+                                 runs on JDK 26 — JaCoCo 0.8.12 can't parse class file major version
+                                 70, and that isn't limited to one package: any JDK-internal class
+                                 loaded lazily at runtime (security providers, java.sql, jshell) or
+                                 generated dynamically (Mockito's mock classes) is version 70 too and
+                                 trips the same crash. An excludes list chasing each one is unbounded;
+                                 scoping the agent to our own package is the actual fix, and is also
+                                 what we want coverage numbers for regardless. Remove once
+                                 jacoco-maven-plugin ships a release with class-file-70 support. -->
+                            <includes>
+                                <include>com/gtd/**</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

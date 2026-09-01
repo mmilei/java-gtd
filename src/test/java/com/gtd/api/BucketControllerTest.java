@@ -59,6 +59,36 @@ class BucketControllerTest {
     }
 
     @Test
+    void createPersonReturnsTheNameTheVaultFiledItUnder() throws Exception {
+        when(vault.createPerson("Quinn")).thenReturn("Quinn");
+        mvc.perform(post("/api/people").contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Quinn\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(true))
+                .andExpect(jsonPath("$.name").value("Quinn"));
+    }
+
+    @Test
+    void createPersonSurfacesTheVaultRejectionAsABadRequest() throws Exception {
+        when(vault.createPerson("Quinn")).thenThrow(new IllegalArgumentException("Person already exists: Quinn"));
+        mvc.perform(post("/api/people").contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Quinn\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Person already exists: Quinn"));
+    }
+
+    @Test
+    void peopleReturnsResolvedLinksBuiltFromKnownPeople() throws Exception {
+        // Built from knownPeople(), not vaultPages() — that's the cheap entities-only list (and the
+        // one that includes aliases as their own entries), not a full wiki/+brain/ walk.
+        when(vault.knownPeople()).thenReturn(List.of("Ana", "Annie"));
+        mvc.perform(get("/api/people"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Ana"))
+                .andExpect(jsonPath("$[0].kind").value("PERSON"))
+                .andExpect(jsonPath("$[0].path").value(""))
+                .andExpect(jsonPath("$[1].name").value("Annie"));
+    }
+
+    @Test
     void areasReturnsConfiguredVocabularyInOrder() throws Exception {
         when(vault.validAreas()).thenReturn(List.of("personal", "friends", "exercise"));
         mvc.perform(get("/api/areas"))
@@ -166,6 +196,18 @@ class BucketControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.done").value(true));
         verify(vault).markDone(FILE, Actor.USER);
+    }
+
+    /** The close still succeeds — the open dependencies ride along as an extra key for the client to warn with. */
+    @Test
+    void markDoneReportsDependenciesThatWereStillOpen() throws Exception {
+        when(vault.markDone(FILE, Actor.USER))
+            .thenReturn(List.of(Map.of("file", "20260625-110000-blocker.md", "title", "Order the tiles")));
+
+        mvc.perform(post("/api/items/" + FILE + "/done"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.done").value(true))
+                .andExpect(jsonPath("$.open_dependencies[0].title").value("Order the tiles"));
     }
 
     @Test

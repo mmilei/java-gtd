@@ -1181,6 +1181,69 @@ class VaultServiceTest {
         assertThat(newVault(tempDir).knownPeople()).isEmpty();
     }
 
+    @Test
+    void createPersonShouldWriteAnEntityPage(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+
+        assertThat(vault.createPerson("  Quinn  ")).isEqualTo("Quinn");
+
+        // Asserted on the parsed frontmatter rather than the bytes: what has to be right is what
+        // Obsidian and knownPeople() read back, not how the shared serializer lays YAML out.
+        Map<String, Object> page = com.gtd.util.MarkdownSerializer.parse(
+            Files.readString(tempDir.resolve("brain/entities/Quinn.md")));
+        assertThat(page).containsOnly(
+            java.util.Map.entry("type", "entity"),
+            java.util.Map.entry("entity_type", "person"),
+            java.util.Map.entry("title", "Quinn"),
+            java.util.Map.entry("created", LocalDate.now().toString()),
+            java.util.Map.entry("tags", List.of()),
+            java.util.Map.entry("body", ""));
+        // The page it just wrote is one the [[Name]] resolution can reach.
+        assertThat(vault.knownPeople()).containsExactly("Quinn");
+    }
+
+    @Test
+    void createPersonShouldRejectABlankName(@TempDir Path tempDir) {
+        VaultService vault = newVault(tempDir);
+        assertThatThrownBy(() -> vault.createPerson("   "))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("name is required");
+    }
+
+    @Test
+    void createPersonShouldRejectAnExistingPerson(@TempDir Path tempDir) throws Exception {
+        givenPerson(tempDir, "Quinn");
+        VaultService vault = newVault(tempDir);
+
+        // Differently cased, so this also covers the near-duplicate page the check exists to stop.
+        assertThatThrownBy(() -> vault.createPerson("quinn"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Person already exists: Quinn");
+        assertThat(vault.knownPeople()).containsExactly("Quinn");
+    }
+
+    @Test
+    void createPersonShouldRejectANameThatIsNotAPlainFilename(@TempDir Path tempDir) {
+        VaultService vault = newVault(tempDir);
+        assertThatThrownBy(() -> vault.createPerson("../../etc/passwd"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid person name");
+    }
+
+    @Test
+    void createPersonShouldRejectAWindowsReservedDeviceName(@TempDir Path tempDir) {
+        // Case-insensitive and regardless of extension: Windows treats "con", "CON", and "Con.md"
+        // identically, and a write that got past this check would fail as an unhandled IOException
+        // instead of the clean 400 every other rejection here produces.
+        VaultService vault = newVault(tempDir);
+        assertThatThrownBy(() -> vault.createPerson("con"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid person name");
+        assertThatThrownBy(() -> vault.createPerson("LPT1"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid person name");
+    }
+
         @Test
     void shouldFollowAnAliasedWikilinkToItsTarget(@TempDir Path tempDir) throws Exception {
         // "[[Ana|Annie]]" reads as Annie but points at Ana — the alias is how the migration
@@ -1216,6 +1279,36 @@ class VaultServiceTest {
             VaultService.LinkKind.PERSON, VaultService.LinkKind.TASK, VaultService.LinkKind.NOTE);
         assertThat(links).extracting(VaultService.ResolvedLink::path).containsExactly(
             "brain/entities/Ana.md", "brain/backlog/" + target, "brain/projects/java-gtd.md");
+    }
+
+    @Test
+    void resolveLinksShouldResolveAFolderQualifiedMentionByBasename(@TempDir Path tempDir) throws Exception {
+        // The vault's own convention writes some mentions with the folder spelled out
+        // ("[[wiki/references/some-note]]") to disambiguate at a glance — the index is keyed by
+        // basename, so the lookup has to strip that prefix the same way indexZone built the key.
+        Files.createDirectories(tempDir.resolve("wiki/references"));
+        Files.writeString(tempDir.resolve("wiki/references/some-note.md"), "---\ntype: reference\n---\n");
+        VaultService vault = newVault(tempDir);
+
+        var bare = vault.resolveLinks("See [[some-note]].");
+        var qualified = vault.resolveLinks("See [[wiki/references/some-note]].");
+
+        assertThat(qualified).extracting(VaultService.ResolvedLink::path).containsExactly("wiki/references/some-note.md");
+        assertThat(qualified).isEqualTo(bare);
+    }
+
+    @Test
+    void deriveLinksShouldMatchAFolderQualifiedPersonMention(@TempDir Path tempDir) throws Exception {
+        givenPerson(tempDir, "Ana");
+        VaultService vault = newVault(tempDir);
+
+        Map<String, Object> task = new java.util.LinkedHashMap<>();
+        task.put("bucket", "backlog");
+        task.put("title", "Call Ana");
+        task.put("body", "Follow up with [[brain/entities/Ana]].");
+        String filename = vault.write(task, Actor.USER);
+
+        assertThat(vault.read(filename).get("related_people")).asInstanceOf(LIST).containsExactly("Ana");
     }
 
     @Test
@@ -1381,6 +1474,101 @@ class VaultServiceTest {
             .extracting(VaultService.ResolvedLink::kind).containsExactly(VaultService.LinkKind.PERSON);
         assertThat(pages).filteredOn(l -> l.path().startsWith("brain/done/"))
             .extracting(VaultService.ResolvedLink::kind).containsExactly(VaultService.LinkKind.TASK);
+    }
+
+    /** Files a backlog task and returns its filename. */
+    private static String task(VaultService vault, String title) {
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", title);
+        return vault.write(op, Actor.USER);
+    }
+
+    @Test
+    void dependsOnAcceptsFilenamesTheVaultActuallyHolds(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        String blocker = task(vault, "Order the tiles");
+        String blocked = task(vault, "Lay the tiles");
+
+        vault.patchMeta(blocked, Map.of("depends_on", List.of(blocker)), Actor.USER);
+
+        assertThat(vault.read(blocked).get("depends_on")).asInstanceOf(LIST).containsExactly(blocker);
+    }
+
+    @Test
+    void dependsOnRejectsATaskNamingItself(@TempDir Path tempDir) throws Exception {
+        // The trivial 1-node case of the cycle detection this class otherwise deliberately skips:
+        // findFile() succeeds (the file is already on disk), so without this check patchMeta would
+        // accept it, and the task would report itself as an open dependency every time it's closed.
+        VaultService vault = newVault(tempDir);
+        String self = task(vault, "Lay the tiles");
+
+        assertThatThrownBy(() -> vault.patchMeta(self, Map.of("depends_on", List.of(self)), Actor.USER))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("depends_on")
+            .hasMessageContaining("itself");
+        assertThat(vault.read(self)).doesNotContainKey("depends_on");
+    }
+
+    @Test
+    void dependsOnRejectsAFileThatIsNotInTheVault(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        String blocked = task(vault, "Lay the tiles");
+
+        assertThatThrownBy(() -> vault.patchMeta(blocked, Map.of("depends_on", List.of("20990101-000000-ghost.md")), Actor.USER))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("depends_on")
+            .hasMessageContaining("20990101-000000-ghost.md");
+        // rejected before anything is written: the note keeps no half-applied value
+        assertThat(vault.read(blocked)).doesNotContainKey("depends_on");
+    }
+
+    @Test
+    void createRejectsADependencyThatIsNotInTheVault(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        Map<String, Object> op = new java.util.LinkedHashMap<>();
+        op.put("bucket", "backlog");
+        op.put("title", "Lay the tiles");
+        op.put("depends_on", List.of("20990101-000000-ghost.md"));
+
+        assertThatThrownBy(() -> vault.write(op, Actor.USER))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("depends_on");
+        try (var files = Files.list(tempDir.resolve("brain/backlog"))) {
+            assertThat(files).isEmpty();
+        }
+    }
+
+    @Test
+    void markDoneClosesTheItemAnywayAndReportsTheDependenciesStillOpen(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        String open = task(vault, "Order the tiles");
+        String finished = task(vault, "Measure the floor");
+        String blocked = task(vault, "Lay the tiles");
+        vault.markDone(finished, Actor.USER);
+        vault.patchMeta(blocked, Map.of("depends_on", List.of(open, finished)), Actor.USER);
+
+        var stillOpen = vault.markDone(blocked, Actor.USER);
+
+        // warn, never forbid: the close happened regardless
+        assertThat(tempDir.resolve("brain/done").resolve(blocked)).exists();
+        assertThat(vault.read(blocked).get("status")).isEqualTo("done");
+        // only the unfinished one is reported, with the title the app needs to name it
+        assertThat(stillOpen).containsExactly(Map.of("file", open, "title", "Order the tiles"));
+    }
+
+    @Test
+    void markDoneReportsNothingWhenEveryDependencyIsAlreadyClosed(@TempDir Path tempDir) throws Exception {
+        VaultService vault = newVault(tempDir);
+        String done = task(vault, "Order the tiles");
+        String dismissed = task(vault, "Call the tiler");
+        String blocked = task(vault, "Lay the tiles");
+        vault.patchMeta(blocked, Map.of("depends_on", List.of(done, dismissed)), Actor.USER);
+        vault.markDone(done, Actor.USER);
+        vault.dismissItem(dismissed, Actor.USER);
+
+        assertThat(vault.markDone(blocked, Actor.USER)).isEmpty();
+        assertThat(vault.read(blocked).get("status")).isEqualTo("done");
     }
 
     @Test

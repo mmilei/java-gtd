@@ -130,6 +130,13 @@ public class VaultService {
         frontmatter.put("tags", tags);
         if ("today".equals(bucket)) frontmatter.put("today_since", LocalDate.now().toString());
 
+        // depends_on names other notes, so every entry is checked against the vault before the
+        // file is written — see validateDependsOn.
+        if (item.get("depends_on") != null) {
+            List<String> deps = validateDependsOn(item.get("depends_on"));
+            if (!deps.isEmpty()) frontmatter.put("depends_on", deps);
+        }
+
         // capture_source is the exact user string that produced this task, set by ChatController
         // on the capture path — a hand-created item has none.
         putIfPresent(frontmatter, "capture_source", item.get("capture_source"));
@@ -267,6 +274,74 @@ public class VaultService {
         return new ArrayList<>(peopleByName().keySet());
     }
 
+    // Anything that would make the name something other than a plain file name in brain/entities/:
+    // path separators, control characters. A leading dot is out too, which also settles "." and "..".
+    private static final Pattern UNSAFE_PERSON_NAME = Pattern.compile("[\\\\/:*?\"<>|\\p{Cntrl}]");
+    private static final int MAX_PERSON_NAME = 100;
+    // Windows treats these as device names regardless of extension or case — "CON.md" is just as
+    // unwritable as "CON" — so the check runs on the stem, not the raw (dot-free) name UNSAFE_PERSON_NAME
+    // already validated.
+    private static final Set<String> RESERVED_WINDOWS_NAMES = Set.of(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9");
+
+    /**
+     * Creates a person page in brain/entities/ with the minimal frontmatter knownPeople() and
+     * Obsidian need, and returns the canonical name it was filed under.
+     *
+     * The one write this service makes outside the task buckets, and deliberately the narrowest
+     * one that works: a fixed directory and a fixed shape, not a "write a file anywhere in the
+     * vault" primitive. wiki/ in particular is not this app's to write — that zone has ingest
+     * conventions (addresses, cross-refs, index) nothing here knows about.
+     *
+     * An existing name is an error rather than an overwrite, matched the way deriveLinks() matches
+     * so a different casing or a registered alias counts as the same person instead of minting the
+     * near-duplicate page the whole entities/ design exists to avoid.
+     */
+    public String createPerson(String rawName) {
+        String name = rawName == null ? "" : rawName.strip();
+        if (name.isEmpty()) throw new IllegalArgumentException("name is required");
+        if (name.length() > MAX_PERSON_NAME || name.startsWith(".") || UNSAFE_PERSON_NAME.matcher(name).find()) {
+            throw new IllegalArgumentException("Invalid person name: " + name);
+        }
+        String stem = name.contains(".") ? name.substring(0, name.indexOf('.')) : name;
+        if (RESERVED_WINDOWS_NAMES.contains(stem.toUpperCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("Invalid person name: " + name);
+        }
+
+        lock.lock();
+        try {
+            String normalized = TextNormalizer.normalize(name);
+            for (Map.Entry<String, String> known : peopleByName().entrySet()) {
+                if (TextNormalizer.normalize(known.getKey()).equals(normalized)) {
+                    throw new IllegalArgumentException("Person already exists: " + known.getValue());
+                }
+            }
+
+            Map<String, Object> frontmatter = new LinkedHashMap<>();
+            frontmatter.put("type", "entity");
+            frontmatter.put("entity_type", "person");
+            frontmatter.put("title", name);
+            frontmatter.put("created", LocalDate.now().toString());
+            frontmatter.put("tags", new ArrayList<String>());
+            try {
+                Files.createDirectories(entitiesDir);
+                // CREATE_NEW rather than a plain write: the existence check above is the useful
+                // error message, this is the one that can't be raced.
+                Files.writeString(entitiesDir.resolve(name + ".md"),
+                    MarkdownSerializer.serialize(frontmatter, ""), java.nio.file.StandardOpenOption.CREATE_NEW);
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                throw new IllegalArgumentException("Person already exists: " + name);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            return name;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /**
      * Every name (canonical or alias) → the canonical name of the page it reaches. Keys keep their
      * written form; matching against them goes through TextNormalizer at the call site.
@@ -334,11 +409,60 @@ public class VaultService {
         }
     }
 
-    public void markDone(String filename, Actor actor) {
+    /**
+     * Closes the item and reports which of its `depends_on` entries were still open at that
+     * moment, as {@code {file, title}} pairs. Advisory only: an open dependency never blocks the
+     * close — the app warns, the user decides — so the answer is a notice the caller may relay,
+     * not an error. Empty list when the item has no dependencies or all of them are finished.
+     */
+    public List<Map<String, Object>> markDone(String filename, Actor actor) {
+        List<Map<String, Object>> stillOpen = new ArrayList<>();
         mutate(filename, doneDir, actor, "done", item -> {
+            stillOpen.addAll(openDependencies(item));
             item.put("status", "done");
             item.putIfAbsent("done_date", LocalDate.now().toString());
         });
+        return stillOpen;
+    }
+
+    /**
+     * The item's dependencies that are neither done nor dismissed, as {@code {file, title}}.
+     * A dependency whose file is gone is skipped rather than reported: it can't be open, and
+     * chasing dead references is deliberately out of scope (nothing revalidates depends_on after
+     * the write that accepted it).
+     */
+    private List<Map<String, Object>> openDependencies(Map<String, Object> item) {
+        if (!(item.get("depends_on") instanceof List<?> deps)) return List.of();
+        List<Map<String, Object>> open = new ArrayList<>();
+        for (Object raw : deps) {
+            Path file = findFile(String.valueOf(raw).strip());
+            if (file == null) continue;
+            Map<String, Object> dep = readFile(file);
+            if (dep == null || INACTIVE_STATUSES.contains(String.valueOf(dep.getOrDefault("status", "")))) continue;
+            open.add(Map.of("file", dep.get("file"), "title", String.valueOf(dep.getOrDefault("title", dep.get("file")))));
+        }
+        return open;
+    }
+
+    /**
+     * Every entry must name a note the vault actually holds — a dependency on a file that isn't
+     * there is a typo, and the whole patch/create is rejected so it never reaches disk. Only the
+     * write path checks: a file deleted afterwards leaves a dead reference behind on purpose
+     * (see openDependencies), and cycles are not detected at all.
+     */
+    private List<String> validateDependsOn(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            throw new IllegalArgumentException("depends_on must be a list of filenames");
+        }
+        List<String> deps = new ArrayList<>();
+        for (Object entry : list) {
+            String dep = String.valueOf(entry).strip();
+            if (findFile(dep) == null) {
+                throw new IllegalArgumentException("depends_on: no such file in the vault: " + dep);
+            }
+            if (!deps.contains(dep)) deps.add(dep);
+        }
+        return deps;
     }
 
     public void dismissItem(String filename, Actor actor) {
@@ -366,12 +490,25 @@ public class VaultService {
         // related/related_people are absent on purpose: both are derived from the body's
         // wikilinks by deriveLinks(), so accepting them here would let a caller set a value the
         // next save silently overwrites.
-        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "area", "estimate_minutes", "confirmed", "project", "location", "priority");
+        Set<String> allowed = Set.of("title", "tags", "due", "today_since", "markdownified", "area", "estimate_minutes", "confirmed", "project", "location", "priority", "depends_on");
         mutate(filename, actor, "patch", item -> meta.forEach((k, v) -> {
             if (!allowed.contains(k) || v == null) return;
             if ("area".equals(k)) {
                 String area = normalizeArea(v);
                 if (area != null) item.put("area", area);
+                return;
+            }
+            if ("depends_on".equals(k)) {
+                // Throws before anything is written when an entry names a file the vault doesn't
+                // have, or names this same file — the trivial 1-node case of the cycle detection
+                // this class otherwise deliberately skips (see validateDependsOn). Unlike a longer
+                // cycle, a task depending on itself is cheap to catch here and would otherwise
+                // report itself as an open dependency on every close, forever.
+                List<String> deps = validateDependsOn(v);
+                if (deps.contains(filename)) {
+                    throw new IllegalArgumentException("depends_on: a task cannot depend on itself: " + filename);
+                }
+                if (deps.isEmpty()) item.remove("depends_on"); else item.put("depends_on", deps);
                 return;
             }
             item.put(k, v);
@@ -894,7 +1031,7 @@ public class VaultService {
         Set<String> found = new LinkedHashSet<>();
         Matcher matcher = WIKILINK.matcher(body);
         while (matcher.find()) {
-            String canonical = people.get(TextNormalizer.normalize(matcher.group(1).strip()));
+            String canonical = people.get(TextNormalizer.normalize(wikilinkKey(matcher.group(1))));
             if (canonical != null) found.add(canonical);
         }
         if (!found.isEmpty()) frontmatter.put("related_people", new ArrayList<>(found));
@@ -905,16 +1042,27 @@ public class VaultService {
      * to derive the frontmatter fields and to answer the frontend, which needs the path to hand a
      * NOTE off to Obsidian via its obsidian:// URI.
      */
+    /**
+     * The lookup key for a raw `[[...]]` target: strips a trailing ".md" and any folder prefix, so
+     * both a bare "[[Some Note]]" and a folder-qualified "[[wiki/references/some-note]]" resolve
+     * the same way the vault's own index and Obsidian itself do — by basename, not full path.
+     */
+    private static String wikilinkKey(String rawTarget) {
+        String target = rawTarget.strip();
+        if (target.endsWith(".md")) target = target.substring(0, target.length() - 3);
+        int slash = target.lastIndexOf('/');
+        return slash >= 0 ? target.substring(slash + 1) : target;
+    }
+
     public List<ResolvedLink> resolveLinks(String body) {
         if (body == null || body.isBlank()) return List.of();
         Map<String, ResolvedLink> index = vaultIndex();
         Map<String, ResolvedLink> found = new LinkedHashMap<>();
         Matcher matcher = WIKILINK.matcher(body);
         while (matcher.find()) {
-            String target = matcher.group(1).strip();
-            if (target.endsWith(".md")) target = target.substring(0, target.length() - 3);
-            if (target.isEmpty()) continue;
-            ResolvedLink link = index.get(TextNormalizer.normalize(target));
+            String key = wikilinkKey(matcher.group(1));
+            if (key.isEmpty()) continue;
+            ResolvedLink link = index.get(TextNormalizer.normalize(key));
             if (link != null) found.putIfAbsent(link.name(), withSettledKind(link));
         }
         return new ArrayList<>(found.values());
@@ -1023,11 +1171,19 @@ public class VaultService {
         if (!filename.matches("[\\w.\\-]+\\.md")) {
             throw new IllegalArgumentException("Invalid filename: " + filename);
         }
+        Path file = findFile(filename);
+        if (file == null) throw new IllegalArgumentException("File not found:" + filename);
+        return file;
+    }
+
+    /** Same lookup as resolveFile without the exceptions — for callers that treat "not there" as an answer. */
+    private Path findFile(String filename) {
+        if (!filename.matches("[\\w.\\-]+\\.md")) return null;
         for (Path dir : allDirs) {
             Path p = dir.resolve(filename);
             if (Files.exists(p)) return p;
         }
-        throw new IllegalArgumentException("File not found:" + filename);
+        return null;
     }
 
     private Map<String, Object> readFile(Path file) {

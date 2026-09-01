@@ -56,10 +56,35 @@ public class BucketController {
         return vault.validAreas();
     }
 
-    /** The people the vault knows, one page per person in brain/entities/ — the source for the editor's [[Name]] autocomplete. */
+    /**
+     * The people the vault knows, one page per person in brain/entities/ — the source for the
+     * editor's `@` autocomplete. Same {@code ResolvedLink} shape as {@link #pages()} so the
+     * frontend's `VaultPage` type covers both without a second contract, but built from the cheap
+     * entities-only listing rather than routing through {@code vaultPages()}'s full wiki/+brain/
+     * walk (~660 paths) — this endpoint feeds live autocomplete, `pages()` is fetched once per
+     * editor mount. Neither `path` nor `obsidianUri` is meaningful for a person page today, so both
+     * come back blank; nothing on the frontend reads them for a PERSON entry (people navigate by
+     * name via the in-app `/persona/<name>` facet, never through Obsidian's URI scheme).
+     */
     @GetMapping("/people")
-    public List<String> people() {
-        return vault.knownPeople();
+    public List<VaultService.ResolvedLink> people() {
+        return vault.knownPeople().stream()
+            .map(name -> new VaultService.ResolvedLink(name, VaultService.LinkKind.PERSON, "", ""))
+            .toList();
+    }
+
+    /**
+     * Creates a person page in brain/entities/ so the editor can name someone the vault doesn't
+     * know yet — offered by the `@` autocomplete when what was typed matches nobody. A blank name
+     * or one that already exists comes back as 400 with the reason (see VaultService.createPerson).
+     *
+     * Scoped to that one directory by design: this is not a generic "create a note" endpoint, and
+     * wiki/ pages in particular belong to the ingest workflow, not to this app.
+     */
+    @PostMapping("/people")
+    public ResponseEntity<Map<String, Object>> createPerson(@RequestBody Map<String, String> body) {
+        String name = vault.createPerson(body.get("name"));
+        return ResponseEntity.ok(Map.of("created", true, "name", name));
     }
 
     /**
@@ -85,7 +110,7 @@ public class BucketController {
      */
     private static final Set<String> CREATABLE_FIELDS = Set.of(
         "bucket", "title", "body", "tags",
-        "due", "area", "project", "location", "estimate_minutes", "priority");
+        "due", "area", "project", "location", "estimate_minutes", "priority", "depends_on");
 
     /** Files a task straight from user-entered fields — no classifier involved, unlike POST /api/chat. */
     @PostMapping("/items")
@@ -105,10 +130,19 @@ public class BucketController {
         return ResponseEntity.ok(Map.of("filed", true, "file", filename, "bucket", bucket, "title", title));
     }
 
+    /**
+     * Closing never fails on an unfinished dependency — warn, never forbid. `open_dependencies`
+     * is added only when there were some, so the existing `{done, file}` contract is unchanged for
+     * every other task; a client that ignores the extra key keeps working.
+     */
     @PostMapping("/items/{filename}/done")
     public ResponseEntity<Map<String, Object>> markDone(@PathVariable String filename) {
-        vault.markDone(filename, Actor.USER);
-        return ResponseEntity.ok(Map.of("done", true, "file", filename));
+        List<Map<String, Object>> openDependencies = vault.markDone(filename, Actor.USER);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("done", true);
+        response.put("file", filename);
+        if (!openDependencies.isEmpty()) response.put("open_dependencies", openDependencies);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/items/{filename}/dismiss")
