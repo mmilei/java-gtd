@@ -107,7 +107,7 @@ Requires Java 21+ and Maven 3.9+. Full configuration options (local properties, 
 |-----|----------|
 | [docs/api.md](docs/api.md) | Full REST API reference — 25 endpoints |
 | [.claude/skills/gtd-triage/SKILL.md](.claude/skills/gtd-triage/SKILL.md) | The same triage logic as a Claude Code skill |
-| [docs/architecture.md](docs/architecture.md) | Services, classification pipeline, GTD buckets, event log & undo, vault layout |
+| [docs/architecture.md](docs/architecture.md) | Diagrams, services, classification pipeline, GTD buckets, event log & undo, vault layout |
 | [docs/setup.md](docs/setup.md) | Configuration, prompt templates, provider switching |
 
 ## Why Java + Spring AI?

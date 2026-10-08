@@ -2,6 +2,21 @@
 
 # Architecture
 
+## Diagrams
+
+![System architecture](diagrams/architecture.png)
+
+Three views of the system, each a self-contained HTML page with light/dark themes and SVG/PNG export (open them
+locally in a browser):
+
+| Diagram | Shows |
+|---------|-------|
+| [System architecture](diagrams/architecture.html) | Frontend, API controllers, classification pipeline, LLM providers, vault and event log |
+| [Voice capture, end to end](diagrams/voice-capture.html) | Sequence from a spoken sentence to a Markdown file: Whisper, Triage, Enrichment, filing |
+| [Inside the frontend](diagrams/frontend.html) | Views, state hooks and the single API module of the React SPA |
+
+The PNGs are screenshots of the HTML pages; regenerate them when a diagram changes.
+
 ## Classification pipeline
 
 ```
