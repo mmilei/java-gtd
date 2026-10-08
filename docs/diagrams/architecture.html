@@ -78,7 +78,6 @@ button:focus-visible{outline:2px solid var(--frontend-s);outline-offset:2px}
 .e-async .line,.e-security .line{stroke-dasharray:6 4}
 .e-return .line{stroke-dasharray:4 4}
 .arrow{fill:var(--es)}
-.lab rect{fill:none}
 .lab text,.mtext{font:500 10px var(--mono);fill:var(--es);paint-order:stroke;stroke:var(--panel);stroke-width:4px;stroke-linejoin:round}
 .mtext{font-size:10.5px}
 .bound{fill:var(--f);fill-opacity:.35;stroke:var(--s);stroke-width:1.3;stroke-dasharray:6 4}
@@ -648,7 +647,7 @@ function makeRouter(W, H, nodes) {
     const cells = [];
     for (let s = bestState; s >= 0; s = prev[s]) cells.push(s >> 2);
     cells.reverse();
-    return {cells, goal: bestGoal, start: starts.find(s => s.c === cells[0]), cost: best};
+    return {cells, goal: bestGoal, start: starts.find(s => s.c === cells[0])};
   }
   function mark(cells) {
     for (let i = 1; i < cells.length; i++) {
@@ -707,6 +706,8 @@ function renderGraph() {
   const isER = spec.type === 'er';
   const nodes = (isER ? spec.tables : spec.nodes).map(n => ({...n}));
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+  if (Object.keys(byId).length !== nodes.length) issues.push('duplicate node ids');
+  for (const n of nodes) if (!(n.row >= 0 && n.col >= 0)) { issues.push(`node "${n.id}": row/col missing or negative`); n.row = Math.max(0, +n.row || 0); n.col = Math.max(0, +n.col || 0); }
   nodes.forEach(isER ? sizeTable : sizeNode);
   // ER relations are not written by hand: every column with "fk": "table.column" becomes one.
   const erEdges = () => nodes.flatMap(t => t.columns.flatMap((c, i) => {
@@ -715,7 +716,9 @@ function renderGraph() {
     const j = target ? target.columns.findIndex(k => k.name === cname) : -1;
     if (j < 0) { issues.push(`fk ${t.id}.${c.name} -> ${c.fk}: unknown table or column`); return []; }
     return [{from: t.id, to: tid, fromRow: i, toRow: j, label: c.rel,
-      card: {from: c.unique ? 'one' : 'many', to: c.nullable ? 'zero-one' : 'one'}}];
+      // An FK that is the table's whole primary key (subtype tables) is one-to-one, like an explicit unique.
+      card: {from: c.unique || (c.pk && t.columns.filter(k => k.pk).length === 1) ? 'one' : 'many',
+        to: c.nullable ? 'zero-one' : 'one'}}];
   }));
   const edges = (isER ? erEdges() : spec.edges || []).filter(e => {
     const ok = byId[e.from] && byId[e.to];
@@ -782,7 +785,11 @@ function renderGraph() {
   });
 
   // Boundaries: dashed regions around their member nodes; nested ones get less padding.
-  const bounds = (spec.boundaries || []).map(b => ({...b, t: typeOf(b.type || 'cloud'), set: new Set(b.nodes)}));
+  const bounds = (spec.boundaries || []).filter(b => {
+    const ok = (b.nodes || []).some(id => byId[id]);
+    if (!ok) issues.push(`boundary "${b.label}": no known nodes`);
+    return ok;
+  }).map(b => ({...b, t: typeOf(b.type || 'cloud'), set: new Set(b.nodes)}));
   for (const b of bounds) {
     const inner = bounds.filter(o => o !== b && [...o.set].every(id => b.set.has(id)) && o.set.size < b.set.size).length;
     const m = b.nodes.map(id => byId[id]).filter(Boolean);
@@ -799,7 +806,7 @@ function renderGraph() {
 
   // Routing: pass 1 picks the sides, pass 2 spreads ports per side and routes for real.
   const router = makeRouter(Wpx, Hpx, nodes);
-  const fixed = e => ({from: e.from_side, to: e.to_side});
+  const fixed = e => e.from === e.to ? {from: e.from_side || 'right', to: e.to_side || 'right'} : {from: e.from_side, to: e.to_side};
   // ER: ports sit on the FK and PK rows, left or right side only (facing sides; right-right when stacked).
   if (isER) for (const e of edges) {
     const a = byId[e.from], b = byId[e.to];
@@ -858,7 +865,7 @@ function renderGraph() {
     el('path', {d, class: 'hit'}, g);
     el('path', {d, class: 'line',
       'marker-end': e.card ? `url(#er-${e.card.to})` : `url(#m-${e.style})`,
-      'marker-start': e.card ? `url(#er-${e.card.from})` : e.both ? `url(#m-${e.style})` : null}, g);
+      'marker-start': e.card ? `url(#er-${e.card.from})` : null}, g);
   }
 
   // Edge labels sit beside their line, never on it: above a horizontal run, right of a vertical one
@@ -893,7 +900,6 @@ function renderGraph() {
     }
     placed.push(best);
     const g = el('g', {class: `lab e-${e.style}`, 'data-from': e.from, 'data-to': e.to, 'data-k': e.i}, Ll);
-    el('rect', {x: best.x, y: best.y, width: best.w, height: best.h, rx: 4}, g);
     txt(g, e.label, best.x + best.w / 2, best.y + 11, '');
   }
 
@@ -914,7 +920,7 @@ function renderSequence() {
   P.forEach(sizeNode);
   const idx = Object.fromEntries(P.map((p, i) => [p.id, i]));
   const M = spec.messages.filter(m => {
-    const ok = m.from in idx && m.to in idx;
+    const ok = Object.hasOwn(idx, m.from) && Object.hasOwn(idx, m.to);
     if (!ok) issues.push(`message ${m.from}->${m.to}: unknown participant`);
     return ok;
   }).map(m => ({...m, a: idx[m.from], b: idx[m.to], style: styleOf(m.style), lw: m.label ? tw(m.label, 10.5, 500) + 28 : 0}));
@@ -937,8 +943,8 @@ function renderSequence() {
     y += m.a === m.b ? 46 : 34;
     for (const g of groups) if (g.to === i) { g.y1 = y - 14; y += 12; }
   });
-  const lastSelf = M.some(m => m.a === P.length - 1 && m.a === m.b);
-  const Wpx = xs[xs.length - 1] + P[P.length - 1].w / 2 + PAD + (lastSelf ? 120 : 0), Hpx = y + PAD;
+  const lastSelf = Math.max(0, ...M.filter(m => m.a === P.length - 1 && m.a === m.b).map(m => m.lw + 60));
+  const Wpx = xs[xs.length - 1] + P[P.length - 1].w / 2 + PAD + lastSelf, Hpx = y + PAD;
 
   svg.setAttribute('viewBox', `0 0 ${Wpx} ${Hpx}`);
   svg.setAttribute('width', Wpx); svg.setAttribute('height', Hpx);
@@ -951,7 +957,7 @@ function renderSequence() {
   const Lb = el('g', {}, svg), Le = el('g', {}, svg), Ln = el('g', {}, svg);
 
   for (const g of groups) {
-    if (g.y0 == null || g.y1 == null) { issues.push(`group "${g.label}": from/to out of range`); continue; }
+    if (g.y0 == null || g.y1 == null || g.to < g.from) { issues.push(`group "${g.label}": from/to out of range`); continue; }
     el('rect', {x: PAD - 16, y: g.y0, width: Wpx - 2 * PAD + 32, height: g.y1 - g.y0, rx: 10, class: `band ${g.kind || ''}`}, Lb);
     txt(Lb, g.label, PAD - 4, g.y0 + 14, 'bandl', 'start');
   }
@@ -1006,17 +1012,18 @@ function renderSequence() {
 }
 
 // ---------- Page chrome: legend, notes, focus, theme, export ----------
+const esc = v => String(v).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 function legend(used) {
   const L = document.getElementById('legend');
   const names = {...TYPE_NAMES, ...(spec.legend || {})};
   const count = a => a.reduce((m, k) => (m[k] = (m[k] || 0) + 1, m), {});
   const tc = count(used.types), sc = count(used.styles);
   let html = '<b>Legend</b>';
-  for (const t of TYPES) if (tc[t]) html += `<span class="chip t-${t}"><span class="sw"></span>${names[t]}<span class="cnt">${tc[t]}</span></span>`;
+  for (const t of TYPES) if (tc[t]) html += `<span class="chip t-${t}"><span class="sw"></span>${esc(names[t])}<span class="cnt">${tc[t]}</span></span>`;
   if (spec.type === 'er') for (const [k, name] of [['one', 'exactly one'], ['zero-one', 'zero or one'], ['many', 'one or many']])
     html += `<span class="chip e-default"><svg width="34" height="20"><line x1="0" y1="10" x2="30" y2="10" class="line" marker-end="url(#er-${k})"/></svg>${name}</span>`;
   for (const s of Object.keys(EDGE_NAMES)) if (sc[s] && (s !== 'default' || spec.type === 'sequence'))
-    html += `<span class="chip e-${s}"><svg width="28" height="10"><line x1="1" y1="5" x2="22" y2="5" class="line"/><path d="M20,1 L28,5 L20,9 z" class="arrow"/></svg>${(spec.edge_legend || {})[s] || EDGE_NAMES[s]}</span>`;
+    html += `<span class="chip e-${s}"><svg width="28" height="10"><line x1="1" y1="5" x2="22" y2="5" class="line"/><path d="M20,1 L28,5 L20,9 z" class="arrow"/></svg>${esc((spec.edge_legend || {})[s] || EDGE_NAMES[s])}</span>`;
   L.innerHTML = html;
 }
 function notes() {
@@ -1057,8 +1064,8 @@ function focus() {
     svg.querySelectorAll('g.node').forEach(n => n.classList.toggle('hot', hotNodes.has(n.dataset.id)));
     svg.querySelectorAll('.rowbg.hot').forEach(r => r.classList.remove('hot'));
     for (const e of edgeEls) if (e.classList.contains('hot') && e.dataset.fr != null) {
-      svg.querySelector(`g.node[data-id="${e.dataset.from}"] .rowbg[data-i="${e.dataset.fr}"]`)?.classList.add('hot');
-      svg.querySelector(`g.node[data-id="${e.dataset.to}"] .rowbg[data-i="${e.dataset.tr}"]`)?.classList.add('hot');
+      svg.querySelector(`g.node[data-id="${CSS.escape(e.dataset.from)}"] .rowbg[data-i="${e.dataset.fr}"]`)?.classList.add('hot');
+      svg.querySelector(`g.node[data-id="${CSS.escape(e.dataset.to)}"] .rowbg[data-i="${e.dataset.tr}"]`)?.classList.add('hot');
     }
     svg.classList.add('focus');
     return hotK.size;
@@ -1158,7 +1165,7 @@ document.getElementById('theme').onclick = () => {
 
 async function main() {
   if (new URLSearchParams(location.search).has('clean')) document.body.classList.add('clean');   // screenshots for docs
-  try { await document.fonts.ready; } catch {}
+  try { await Promise.all([400, 500, 600, 700].map(w => document.fonts.load(`${w} 12px "JetBrains Mono"`))); await document.fonts.ready; } catch {}
   document.title = spec.title || 'Diagram';
   document.getElementById('title').textContent = spec.title || '';
   if (spec.subtitle) { const s = document.getElementById('subtitle'); s.textContent = spec.subtitle; s.hidden = false; }
