@@ -95,6 +95,19 @@ button:focus-visible{outline:2px solid var(--frontend-s);outline-offset:2px}
 .ct{font:400 10px var(--mono);fill:var(--muted)}
 .key{font:700 8.5px var(--mono);fill:var(--s);letter-spacing:.04em} .key.pk{fill:var(--cloud-s)}
 .erm{fill:none;stroke:var(--es);stroke-width:1.5} .erm-o{fill:var(--panel);stroke:var(--es);stroke-width:1.5}
+.hit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke}
+g.node text,.icon,.lab text{pointer-events:none}
+.rowbg{fill:transparent} .rowbg.hot{fill:var(--f)}
+.e-hot{--es:var(--frontend-s)}
+svg.focus g.edge.hot .line{stroke:var(--frontend-s);stroke-width:2.4}
+svg.focus g.lab.hot text,svg.focus g.edge.hot .mtext{fill:var(--frontend-s)}
+svg.zoomed{cursor:grab} svg.zoomed:active{cursor:grabbing}
+.panel{position:relative}
+.clean .tools,.clean .zoom{display:none}
+.zoom{position:absolute;top:12px;right:12px;display:flex;gap:4px;z-index:1}
+.zoom button{padding:4px 9px;font-size:11px;min-width:30px}
+.panel:fullscreen{overflow:auto;display:flex;flex-direction:column;justify-content:center;border-radius:0}
+.panel:fullscreen #d{max-height:88vh;width:auto}
 g.node,g.edge,g.lab{transition:opacity .16s}
 svg.focus g.node:not(.hot),svg.focus g.edge:not(.hot),svg.focus g.lab:not(.hot){opacity:.18}
 @media (prefers-reduced-motion:reduce){g.node,g.edge,g.lab{transition:none}}
@@ -112,6 +125,12 @@ svg.focus g.node:not(.hot),svg.focus g.edge:not(.hot),svg.focus g.lab:not(.hot){
     </div>
   </header>
   <div class="panel">
+    <div class="zoom" title="Ctrl + wheel zooms, drag pans, double click resets">
+      <button type="button" data-z="out" aria-label="Zoom out">−</button>
+      <button type="button" data-z="fit" id="zpct" aria-label="Reset zoom">100%</button>
+      <button type="button" data-z="in" aria-label="Zoom in">+</button>
+      <button type="button" data-z="full" aria-label="Fullscreen">⛶</button>
+    </div>
     <svg id="d" xmlns="http://www.w3.org/2000/svg" role="img"></svg>
     <div id="legend"></div>
   </div>
@@ -384,16 +403,17 @@ function drawNode(layer, n) {
   if (tw(n.label, 12.5, 700) > n.w - 12) issues.push(`node "${n.id}": label wider than box`);
 }
 function markers(defs) {
-  for (const s of Object.keys(EDGE_NAMES)) {
-    const m = el('marker', {id: `m-${s}`, class: `e-${s}`, viewBox: '0 0 10 10', refX: 9, refY: 5,
+  // Every marker also exists as "-hot", in the highlight color, swapped in while a relation is focused.
+  for (const s of Object.keys(EDGE_NAMES)) for (const hot of ['', '-hot']) {
+    const m = el('marker', {id: `m-${s}${hot}`, class: hot ? 'e-hot' : `e-${s}`, viewBox: '0 0 10 10', refX: 9, refY: 5,
       markerWidth: 9, markerHeight: 9, markerUnits: 'userSpaceOnUse', orient: 'auto-start-reverse'}, defs);
     el('path', {d: 'M0,1 L10,5 L0,9 z', class: 'arrow'}, m);
   }
   // ER cardinality ends (crow's foot). x=20 sits on the table border; the start marker is reversed so the
   // same drawing works at both ends of a relation.
   const ER = {many: 'M20,3 L8,10 L20,17 M5,3 V17', one: 'M11,3 V17 M15,3 V17', 'zero-one': 'M15,3 V17'};
-  for (const [k, d] of Object.entries(ER)) {
-    const m = el('marker', {id: `er-${k}`, class: 'e-default', viewBox: '0 0 20 20', refX: 20, refY: 10,
+  for (const [k, d] of Object.entries(ER)) for (const hot of ['', '-hot']) {
+    const m = el('marker', {id: `er-${k}${hot}`, class: hot ? 'e-hot' : 'e-default', viewBox: '0 0 20 20', refX: 20, refY: 10,
       markerWidth: 20, markerHeight: 20, markerUnits: 'userSpaceOnUse', orient: 'auto-start-reverse'}, defs);
     el('path', {d, class: 'erm'}, m);
     if (k === 'zero-one') el('circle', {cx: 7, cy: 10, r: 3.5, class: 'erm-o'}, m);
@@ -421,6 +441,7 @@ function drawTable(layer, t, byId) {
   txt(g, t.label, 30, 19.5, 'tn', 'start');
   t.columns.forEach((c, i) => {
     const y = ER_HEAD + i * ER_ROW + ER_ROW / 2 + 7;
+    el('rect', {x: 1.5, y: ER_HEAD + 3 + i * ER_ROW, width: t.w - 3, height: ER_ROW, class: 'rowbg', 'data-i': i}, g);
     if (c.pk) txt(g, 'PK', 10, y - 0.5, 'key pk', 'start');
     if (c.fk) {
       const target = byId[String(c.fk).split('.')[0]];
@@ -747,8 +768,11 @@ function renderGraph() {
   stats.length = Math.round(edges.reduce((s, e) => s + e.pts.slice(1).reduce((t, q, i) =>
     t + Math.abs(q[0] - e.pts[i][0]) + Math.abs(q[1] - e.pts[i][1]), 0), 0));
   for (const e of edges) {
-    const g = el('g', {class: `edge e-${e.style}`, 'data-from': e.from, 'data-to': e.to}, Le);
-    el('path', {d: roundPath(e.pts, 8, e.hops), class: 'line',
+    const g = el('g', {class: `edge e-${e.style}`, 'data-from': e.from, 'data-to': e.to, 'data-k': e.i,
+      'data-fr': e.fromRow, 'data-tr': e.toRow}, Le);
+    const d = roundPath(e.pts, 8, e.hops);
+    el('path', {d, class: 'hit'}, g);
+    el('path', {d, class: 'line',
       'marker-end': e.card ? `url(#er-${e.card.to})` : `url(#m-${e.style})`,
       'marker-start': e.card ? `url(#er-${e.card.from})` : e.both ? `url(#m-${e.style})` : null}, g);
   }
@@ -784,7 +808,7 @@ function renderGraph() {
       issues.push(`label "${e.label}" (${e.from}->${e.to}) has no free spot: widen spacing or move nodes`);
     }
     placed.push(best);
-    const g = el('g', {class: `lab e-${e.style}`, 'data-from': e.from, 'data-to': e.to}, Ll);
+    const g = el('g', {class: `lab e-${e.style}`, 'data-from': e.from, 'data-to': e.to, 'data-k': e.i}, Ll);
     el('rect', {x: best.x, y: best.y, width: best.w, height: best.h, rx: 4}, g);
     txt(g, e.label, best.x + best.w / 2, best.y + 11, '');
   }
@@ -878,19 +902,21 @@ function renderSequence() {
     el('rect', {x: xs[i] - 5, y: a[0], width: 10, height: a[1] - a[0], rx: 3, class: 'bar'}, g);
   }));
   const edgeX = (i, y, dir) => xs[i] + (act[i].some(a => y >= a[0] && y <= a[1]) ? 5 * dir : 0);
-  for (const m of M) {
-    const g = el('g', {class: `edge e-${m.style}`, 'data-from': m.from, 'data-to': m.to}, Le);
+  M.forEach((m, k) => {
+    const g = el('g', {class: `edge e-${m.style}`, 'data-from': m.from, 'data-to': m.to, 'data-k': k}, Le);
     if (m.a === m.b) {
-      const x = edgeX(m.a, m.y, 1);
-      el('path', {d: roundPath([[x, m.y], [x + 36, m.y], [x + 36, m.y + 18], [x, m.y + 18]], 6), class: 'line', 'marker-end': `url(#m-${m.style})`}, g);
+      const x = edgeX(m.a, m.y, 1), d = roundPath([[x, m.y], [x + 36, m.y], [x + 36, m.y + 18], [x, m.y + 18]], 6);
+      el('path', {d, class: 'hit'}, g);
+      el('path', {d, class: 'line', 'marker-end': `url(#m-${m.style})`}, g);
       if (m.label) txt(g, m.label, x + 44, m.y + 13, 'mtext', 'start');
-      continue;
+      return;
     }
     const dir = m.b > m.a ? 1 : -1;
-    const x1 = edgeX(m.a, m.y, dir), x2 = edgeX(m.b, m.y, -dir);
-    el('path', {d: `M${x1},${m.y} L${x2},${m.y}`, class: 'line', 'marker-end': `url(#m-${m.style})`}, g);
+    const x1 = edgeX(m.a, m.y, dir), x2 = edgeX(m.b, m.y, -dir), d = `M${x1},${m.y} L${x2},${m.y}`;
+    el('path', {d, class: 'hit'}, g);
+    el('path', {d, class: 'line', 'marker-end': `url(#m-${m.style})`}, g);
     if (m.label) txt(g, m.label, (x1 + x2) / 2, m.y - 7, 'mtext');
-  }
+  });
   P.forEach(p => drawNode(Ln, p));
   return {types: P.map(p => p.t), styles: M.map(m => m.style)};
 }
@@ -920,23 +946,104 @@ function notes() {
     c.appendChild(ul); N.appendChild(c);
   }
 }
+// Highlight: hovering a line (or its label) lights that relation and the two nodes it joins; hovering an ER
+// row lights the relations that leave from or land on that row; hovering a node lights all of its relations.
 function focus() {
-  svg.querySelectorAll('g.node').forEach(n => {
-    n.addEventListener('mouseenter', () => {
-      const id = n.dataset.id, hot = new Set([id]);
-      svg.querySelectorAll('g.edge,g.lab').forEach(e => {
-        const on = e.dataset.from === id || e.dataset.to === id;
-        e.classList.toggle('hot', on);
-        if (on) { hot.add(e.dataset.from); hot.add(e.dataset.to); }
-      });
-      svg.querySelectorAll('g.node').forEach(o => o.classList.toggle('hot', hot.has(o.dataset.id)));
-      svg.classList.add('focus');
-    });
-    n.addEventListener('mouseleave', () => svg.classList.remove('focus'));
+  const edgeEls = [...svg.querySelectorAll('g.edge')];
+  const swap = (path, hot) => {
+    for (const a of ['marker-end', 'marker-start']) {
+      const v = path && path.getAttribute(a);
+      if (v) path.setAttribute(a, hot ? v.replace(/(-hot)?\)$/, '-hot)') : v.replace(/-hot\)$/, ')'));
+    }
+  };
+  const clear = () => {
+    svg.classList.remove('focus');
+    edgeEls.forEach(e => swap(e.querySelector('.line'), false));
+    svg.querySelectorAll('.rowbg.hot').forEach(r => r.classList.remove('hot'));
+  };
+  const show = pred => {
+    const hotNodes = new Set(), hotK = new Set();
+    for (const e of edgeEls) {
+      const on = pred(e);
+      e.classList.toggle('hot', on);
+      swap(e.querySelector('.line'), on);
+      if (on) { hotNodes.add(e.dataset.from); hotNodes.add(e.dataset.to); hotK.add(e.dataset.k); }
+    }
+    svg.querySelectorAll('g.lab').forEach(l => l.classList.toggle('hot', hotK.has(l.dataset.k)));
+    svg.querySelectorAll('g.node').forEach(n => n.classList.toggle('hot', hotNodes.has(n.dataset.id)));
+    svg.querySelectorAll('.rowbg.hot').forEach(r => r.classList.remove('hot'));
+    for (const e of edgeEls) if (e.classList.contains('hot') && e.dataset.fr != null) {
+      svg.querySelector(`g.node[data-id="${e.dataset.from}"] .rowbg[data-i="${e.dataset.fr}"]`)?.classList.add('hot');
+      svg.querySelector(`g.node[data-id="${e.dataset.to}"] .rowbg[data-i="${e.dataset.tr}"]`)?.classList.add('hot');
+    }
+    svg.classList.add('focus');
+    return hotK.size;
+  };
+  svg.addEventListener('mouseover', ev => {
+    const t = ev.target, line = t.closest('g.edge') || t.closest('g.lab'), row = t.closest('.rowbg'), node = t.closest('g.node');
+    if (line) return show(e => e.dataset.k === line.dataset.k);
+    if (row) {
+      const id = node.dataset.id, i = row.dataset.i;
+      if (show(e => (e.dataset.from === id && e.dataset.fr === i) || (e.dataset.to === id && e.dataset.tr === i))) return;
+    }
+    if (node) return show(e => e.dataset.from === node.dataset.id || e.dataset.to === node.dataset.id);
+    clear();
+  });
+  svg.addEventListener('mouseleave', clear);
+}
+// Zoom and pan by moving the viewBox: Ctrl/⌘ + wheel (and trackpad pinch) zooms around the pointer, drag pans
+// while zoomed in, double click or "100%" resets, ⛶ goes fullscreen. Keys: + - 0 f.
+let fullBox = null;
+function zoomPan() {
+  const [, , W, H] = svg.getAttribute('viewBox').split(' ').map(Number);
+  fullBox = `0 0 ${W} ${H}`;
+  const panel = svg.closest('.panel'), pct = document.getElementById('zpct');
+  let vb = {x: 0, y: 0, w: W, h: H}, drag = null;
+  const set = () => {
+    svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+    pct.textContent = `${Math.round(W / vb.w * 100)}%`;
+    svg.classList.toggle('zoomed', vb.w < W);
+  };
+  const clamp = () => { vb.x = Math.max(0, Math.min(W - vb.w, vb.x)); vb.y = Math.max(0, Math.min(H - vb.h, vb.y)); };
+  const zoom = (f, cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2) => {
+    const nw = Math.max(W / 8, Math.min(W, vb.w * f)), s = nw / vb.w;
+    vb = {x: cx - (cx - vb.x) * s, y: cy - (cy - vb.y) * s, w: nw, h: vb.h * s};
+    clamp(); set();
+  };
+  const reset = () => { vb = {x: 0, y: 0, w: W, h: H}; set(); };
+  const full = () => document.fullscreenElement ? document.exitFullscreen() : panel.requestFullscreen?.();
+  svg.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const r = svg.getBoundingClientRect();
+    zoom(e.deltaY > 0 ? 1.15 : 1 / 1.15, vb.x + (e.clientX - r.left) / r.width * vb.w, vb.y + (e.clientY - r.top) / r.height * vb.h);
+  }, {passive: false});
+  svg.addEventListener('pointerdown', e => {
+    if (vb.w >= W || e.button !== 0) return;
+    drag = {x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y};
+    svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const r = svg.getBoundingClientRect();
+    vb.x = drag.vx - (e.clientX - drag.x) / r.width * vb.w;
+    vb.y = drag.vy - (e.clientY - drag.y) / r.height * vb.h;
+    clamp(); set();
+  });
+  svg.addEventListener('pointerup', () => { drag = null; });
+  svg.addEventListener('dblclick', reset);
+  panel.querySelectorAll('[data-z]').forEach(b => b.addEventListener('click', () =>
+    ({in: () => zoom(1 / 1.25), out: () => zoom(1.25), fit: reset, full})[b.dataset.z]()));
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey || /input|textarea/i.test(e.target.tagName)) return;
+    const act = {'+': () => zoom(1 / 1.25), '=': () => zoom(1 / 1.25), '-': () => zoom(1.25), '0': reset, f: full}[e.key];
+    if (act) { e.preventDefault(); act(); }
   });
 }
 function standaloneSVG() {
   const s = svg.cloneNode(true);
+  if (fullBox) s.setAttribute('viewBox', fullBox);
+  s.classList.remove('zoomed');
   s.setAttribute('data-theme', document.documentElement.dataset.theme);
   s.classList.remove('focus');
   const st = document.createElementNS(NS, 'style');
@@ -966,6 +1073,7 @@ document.getElementById('theme').onclick = () => {
 };
 
 async function main() {
+  if (new URLSearchParams(location.search).has('clean')) document.body.classList.add('clean');   // screenshots for docs
   try { await document.fonts.ready; } catch {}
   document.title = spec.title || 'Diagram';
   document.getElementById('title').textContent = spec.title || '';
@@ -975,6 +1083,7 @@ async function main() {
   try { used = spec.type === 'sequence' ? renderSequence() : renderGraph(); }
   catch (err) { issues.push('render failed: ' + err.message); console.error(err); }
   legend(used); notes(); focus();
+  if (svg.getAttribute('viewBox')) zoomPan();
   const w = document.getElementById('warn');
   if (issues.length) { w.hidden = false; w.textContent = `${issues.length} layout issue${issues.length > 1 ? 's' : ''}`; w.title = issues.join('\n'); }
   window.diagramIssues = issues;
